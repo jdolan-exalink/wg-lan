@@ -13,6 +13,7 @@ from app.schemas.peer import (
     PeerUpdate,
     RoadWarriorCreate,
 )
+from app.schemas.group import AddMembersRequest
 from app.services import peer_service
 from app.services.audit_service import log as audit_log
 from app.services.config_service import generate_client_config
@@ -94,6 +95,31 @@ def update_peer(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     peer = peer_service.update_peer(db, peer, body)
+    return PeerResponse.from_orm_peer(peer)
+
+
+@router.post("/{peer_id}/groups", response_model=PeerResponse)
+def update_peer_groups(
+    peer_id: int,
+    body: AddMembersRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Replace all group memberships for a peer with the given list."""
+    from app.models.group import PeerGroupMember
+    peer = peer_service.get_peer(db, peer_id)
+    if not peer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+
+    # Remove existing memberships
+    db.query(PeerGroupMember).filter(PeerGroupMember.peer_id == peer_id).delete()
+
+    # Add new ones
+    for gid in body.peer_ids:
+        db.add(PeerGroupMember(peer_id=peer_id, group_id=gid))
+
+    db.commit()
+    db.refresh(peer)
     return PeerResponse.from_orm_peer(peer)
 
 

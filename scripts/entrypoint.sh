@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "==> WG-LAN starting..."
+echo "==> NetLoom starting..."
 
 # Create directories
 mkdir -p /app/data /etc/wireguard
@@ -11,43 +11,45 @@ echo "==> Running migrations..."
 cd /app
 python -m alembic upgrade head
 
-# Create initial admin user (idempotent)
-echo "==> Initialising admin user..."
+# Create initial admin user + server config (idempotent)
+echo "==> Initialising defaults..."
 python -c "
 from app.database import SessionLocal, Base, engine
 Base.metadata.create_all(bind=engine)
 db = SessionLocal()
-from app.services.auth_service import create_admin_user
+from app.services.auth_service import create_admin_user, create_server_config
 create_admin_user(db)
+create_server_config(db)
 db.close()
-print('Admin user ready')
+print('Defaults ready')
 "
 
-# Set up WireGuard if server config exists in DB
-echo "==> Checking WireGuard state..."
+# Set up WireGuard — this MUST succeed before starting the dashboard
+echo "==> Starting WireGuard..."
 python -c "
 from app.database import SessionLocal
-from app.models.server_config import ServerConfig
+from app.services.wg_service import apply_config, is_interface_up
+import time
+
 db = SessionLocal()
-cfg = db.query(ServerConfig).first()
-db.close()
-if cfg:
-    from app.services.wg_service import apply_config, bring_up, is_interface_up
-    db2 = SessionLocal()
-    try:
-        apply_config(db2)
-        if not is_interface_up():
-            bring_up()
-            print('WireGuard interface up')
-        else:
-            print('WireGuard already up')
-    except Exception as e:
-        print(f'WireGuard setup skipped: {e}')
-    finally:
-        db2.close()
-else:
-    print('No server config yet — WireGuard will start after first setup via dashboard')
+try:
+    # Apply config (creates interface if needed)
+    apply_config(db)
+    
+    # Wait for interface to be up (max 10 seconds)
+    for i in range(20):
+        if is_interface_up():
+            print('WireGuard interface is up and running')
+            break
+        time.sleep(0.5)
+    else:
+        print('WARNING: WireGuard interface may not be fully ready')
+except Exception as e:
+    print(f'ERROR: WireGuard setup failed: {e}')
+    print('Dashboard will start but WireGuard features will be unavailable')
+finally:
+    db.close()
 "
 
-echo "==> Starting WG-LAN dashboard on :5000"
-exec uvicorn app.main:app --host 0.0.0.0 --port 5000 --workers 1
+echo "==> Starting NetLoom dashboard on :7777"
+exec uvicorn app.main:app --host 0.0.0.0 --port 7777 --workers 1

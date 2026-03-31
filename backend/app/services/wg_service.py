@@ -44,6 +44,12 @@ def apply_config(db: Session) -> None:
     """
     Regenerate wg0.conf from DB state and apply via wg syncconf.
     Does not drop existing connections.
+
+    Note: wg syncconf only accepts native wg directives (PrivateKey, ListenPort,
+    PublicKey, AllowedIPs, PresharedKey, PersistentKeepalive). wg-quick directives
+    like Address, DNS, MTU, PostUp, PostDown must be stripped.
+
+    If the interface doesn't exist yet, uses wg-quick up to create it first.
     """
     from app.models.server_config import ServerConfig
 
@@ -59,13 +65,29 @@ def apply_config(db: Session) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(config_str)
 
-    # Build stripped config (no PostUp/PostDown — syncconf doesn't support them)
+    # Build stripped config for wg syncconf — only native wg directives allowed
+    # wg-quick directives: Address, DNS, MTU, PostUp, PostDown
+    wg_quick_directives = {"address", "dns", "mtu", "postup", "postdown"}
     stripped_lines = []
+    in_interface = True
     for line in config_str.splitlines():
         stripped = line.strip()
-        if not stripped.lower().startswith("postup") and not stripped.lower().startswith("postdown"):
+        if stripped.lower() == "[peer]":
+            in_interface = False
             stripped_lines.append(line)
+            continue
+        if in_interface:
+            key = stripped.split("=")[0].strip().lower() if "=" in stripped else ""
+            if key in wg_quick_directives:
+                continue
+        stripped_lines.append(line)
     stripped_config = "\n".join(stripped_lines)
+
+    # If interface doesn't exist, create it with wg-quick up first
+    if not is_interface_up():
+        result = _run(["wg-quick", "up", settings.wg_interface])
+        if result.returncode != 0:
+            raise RuntimeError(f"wg-quick up failed: {result.stderr.strip()}")
 
     result = _run(
         ["wg", "syncconf", settings.wg_interface, "/dev/stdin"],
@@ -73,6 +95,13 @@ def apply_config(db: Session) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(f"wg syncconf failed: {result.stderr.strip()}")
+
+
+def ensure_interface_up(db: Session) -> None:
+    """Ensure WireGuard interface is up. Creates it if needed, applies config."""
+    if is_interface_up():
+        return
+    apply_config(db)
 
 
 def get_peer_statuses(interface: str = "") -> dict[str, PeerStatus]:

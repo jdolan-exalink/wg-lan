@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { peersApi } from "@/api/peers";
 import { networksApi, groupsApi } from "@/api/networks";
@@ -10,12 +10,76 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatHandshake, formatBytes } from "@/lib/utils";
 import {
   Plus, Download, QrCode, RotateCcw, Power, Trash2,
   Laptop, Smartphone, Router, Server, ChevronLeft, ChevronRight,
+  Shield,
 } from "lucide-react";
 import type { Peer } from "@/types/peer";
+
+function QrCodeCard({ peer, onClose }: { peer: Peer; onClose: () => void }) {
+  const [qrSrc, setQrSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setQrSrc(null);
+
+    fetch(`/api/peers/${peer.id}/qrcode`, { credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        return res.blob();
+      })
+      .then((blob) => {
+        if (!cancelled) {
+          setQrSrc(URL.createObjectURL(blob));
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [peer.id]);
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-sm">QR Code — {peer.name}</CardTitle>
+        <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+      </CardHeader>
+      <CardContent className="flex flex-col items-center gap-3">
+        {loading && <p className="text-sm text-muted-foreground">Loading QR code...</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {qrSrc && <img src={qrSrc} alt="QR code" className="max-w-xs border rounded" />}
+        <a href={peersApi.configUrl(peer.id)} download={`${peer.name}.conf`}>
+          <Button variant="outline" size="sm">
+            <Download className="h-4 w-4 mr-2" /> Download Config
+          </Button>
+        </a>
+      </CardContent>
+    </Card>
+  );
+}
 
 type WizardType = "roadwarrior" | "branch_office" | null;
 
@@ -54,11 +118,35 @@ export function PeersPage() {
   const qc = useQueryClient();
   const [wizard, setWizard] = useState<WizardType>(null);
   const [qrPeer, setQrPeer] = useState<Peer | null>(null);
+  const [editGroupsPeer, setEditGroupsPeer] = useState<Peer | null>(null);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([]);
 
   const { data: peers = [] } = useQuery({
     queryKey: ["peers"],
     queryFn: () => peersApi.list().then((r) => r.data),
     refetchInterval: 15_000,
+  });
+
+  const { data: networks = [] } = useQuery({
+    queryKey: ["networks"],
+    queryFn: () => networksApi.list().then((r) => r.data),
+  });
+
+  const { data: groups = [] } = useQuery({
+    queryKey: ["groups"],
+    queryFn: () => groupsApi.list().then((r) => r.data),
+  });
+
+  const networkMap = new Map(networks.map((n) => [n.id, n.name]));
+
+  const updatePeerGroups = useMutation({
+    mutationFn: ({ peerId, groupIds }: { peerId: number; groupIds: number[] }) =>
+      peersApi.updateGroups(peerId, groupIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["peers"] });
+      qc.invalidateQueries({ queryKey: ["groups"] });
+      setEditGroupsPeer(null);
+    },
   });
 
   const toggle = useMutation({
@@ -98,15 +186,7 @@ export function PeersPage() {
       )}
 
       {qrPeer && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-sm">QR Code — {qrPeer.name}</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => setQrPeer(null)}>Close</Button>
-          </CardHeader>
-          <CardContent className="flex justify-center">
-            <img src={peersApi.qrcodeUrl(qrPeer.id)} alt="QR code" className="max-w-xs border rounded" />
-          </CardContent>
-        </Card>
+        <QrCodeCard peer={qrPeer} onClose={() => setQrPeer(null)} />
       )}
 
       <Card>
@@ -116,6 +196,7 @@ export function PeersPage() {
               <tr className="border-b bg-muted/40">
                 <th className="text-left px-4 py-2 font-medium">Name</th>
                 <th className="text-left px-4 py-2 font-medium">Type</th>
+                <th className="text-left px-4 py-2 font-medium">LAN</th>
                 <th className="text-left px-4 py-2 font-medium">IP</th>
                 <th className="text-left px-4 py-2 font-medium">Tunnel</th>
                 <th className="text-left px-4 py-2 font-medium">Status</th>
@@ -124,7 +205,7 @@ export function PeersPage() {
             </thead>
             <tbody>
               {peers.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No peers yet — use a wizard above</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No peers yet — use a wizard above</td></tr>
               ) : peers.map((p) => (
                 <tr key={p.id} className="border-b last:border-0 hover:bg-muted/20">
                   <td className="px-4 py-2">
@@ -134,6 +215,7 @@ export function PeersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2 text-muted-foreground capitalize">{p.peer_type.replace("_", " ")}</td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">{networkMap.get(p.network_id) ?? `#${p.network_id}`}</td>
                   <td className="px-4 py-2 font-mono text-xs">{p.assigned_ip}</td>
                   <td className="px-4 py-2">
                     <Badge variant={p.tunnel_mode === "full" ? "default" : "outline"}>{p.tunnel_mode}</Badge>
@@ -143,6 +225,18 @@ export function PeersPage() {
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Edit groups"
+                        onClick={() => {
+                          setEditGroupsPeer(p);
+                          // TODO: load current groups for this peer
+                          setSelectedGroupIds([]);
+                        }}
+                      >
+                        <Shield className="h-4 w-4" />
+                      </Button>
                       <a href={peersApi.configUrl(p.id)} download={`${p.name}.conf`}>
                         <Button variant="ghost" size="icon" title="Download config">
                           <Download className="h-4 w-4" />
@@ -168,6 +262,59 @@ export function PeersPage() {
           </table>
         </CardContent>
       </Card>
+
+      {/* Edit Groups Dialog */}
+      <Dialog open={editGroupsPeer !== null} onOpenChange={(open) => !open && setEditGroupsPeer(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Groups — {editGroupsPeer?.name}</DialogTitle>
+            <DialogDescription>
+              Select the groups this peer should belong to. Changes will take effect after applying config.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            {groups.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No groups available. Create groups first.</p>
+            ) : (
+              groups.map((g) => (
+                <label key={g.id} className="flex items-center gap-3 p-2 rounded hover:bg-accent cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedGroupIds.includes(g.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedGroupIds((prev) => [...prev, g.id]);
+                      } else {
+                        setSelectedGroupIds((prev) => prev.filter((id) => id !== g.id));
+                      }
+                    }}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  <div>
+                    <span className="text-sm font-medium">{g.name}</span>
+                    {g.description && <p className="text-xs text-muted-foreground">{g.description}</p>}
+                  </div>
+                </label>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditGroupsPeer(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (editGroupsPeer) {
+                  updatePeerGroups.mutate({ peerId: editGroupsPeer.id, groupIds: selectedGroupIds });
+                }
+              }}
+              disabled={updatePeerGroups.isPending}
+            >
+              {updatePeerGroups.isPending ? "Saving..." : "Save Groups"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

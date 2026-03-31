@@ -17,11 +17,18 @@ class ServerConfigResponse(BaseModel):
 
 
 class ServerConfigUpdate(BaseModel):
+    address: str | None = None
+    listen_port: int | None = None
     dns: str | None = None
     mtu: int | None = None
     post_up: str | None = None
     post_down: str | None = None
     endpoint: str | None = None
+
+
+class RegenerateKeyResponse(BaseModel):
+    public_key: str
+    message: str
 
 
 class HealthResponse(BaseModel):

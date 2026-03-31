@@ -4,9 +4,9 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="./data/backups"
 mkdir -p "$BACKUP_DIR"
 
-if [ -f "./data/wg-lan.db" ]; then
-  cp "./data/wg-lan.db" "$BACKUP_DIR/wg-lan_$TIMESTAMP.db"
-  echo "DB backed up: $BACKUP_DIR/wg-lan_$TIMESTAMP.db"
+if [ -f "./data/netloom.db" ]; then
+  cp "./data/netloom.db" "$BACKUP_DIR/netloom_$TIMESTAMP.db"
+  echo "DB backed up: $BACKUP_DIR/netloom_$TIMESTAMP.db"
 fi
 
 if [ -d "./config" ]; then

@@ -1,12 +1,21 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { groupsApi } from "@/api/networks";
+import { peersApi } from "@/api/peers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Plus, Trash2, Users } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -20,10 +29,18 @@ type FormData = z.infer<typeof schema>;
 export function GroupsPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [addPeersGroupId, setAddPeersGroupId] = useState<number | null>(null);
+  const [selectedPeerIds, setSelectedPeerIds] = useState<number[]>([]);
 
   const { data: groups = [] } = useQuery({
     queryKey: ["groups"],
     queryFn: () => groupsApi.list().then((r) => r.data),
+  });
+
+  const { data: peers = [] } = useQuery({
+    queryKey: ["peers"],
+    queryFn: () => peersApi.list().then((r) => r.data),
+    enabled: addPeersGroupId !== null,
   });
 
   const create = useMutation({
@@ -34,6 +51,17 @@ export function GroupsPage() {
   const del = useMutation({
     mutationFn: (id: number) => groupsApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["groups"] }),
+  });
+
+  const addMembers = useMutation({
+    mutationFn: ({ groupId, peerIds }: { groupId: number; peerIds: number[] }) =>
+      groupsApi.addMembers(groupId, peerIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["groups"] });
+      qc.invalidateQueries({ queryKey: ["peers"] });
+      setAddPeersGroupId(null);
+      setSelectedPeerIds([]);
+    },
   });
 
   const { register, handleSubmit, formState: { errors, isSubmitting }, reset } = useForm<FormData>({
@@ -94,9 +122,22 @@ export function GroupsPage() {
                     <Badge variant="secondary">{g.member_count} peer{g.member_count !== 1 ? "s" : ""}</Badge>
                   </td>
                   <td className="px-4 py-2 text-right">
-                    <Button variant="ghost" size="icon" onClick={() => del.mutate(g.id)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Add peers"
+                        onClick={() => {
+                          setAddPeersGroupId(g.id);
+                          setSelectedPeerIds([]);
+                        }}
+                      >
+                        <Users className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => del.mutate(g.id)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -104,6 +145,59 @@ export function GroupsPage() {
           </table>
         </CardContent>
       </Card>
+
+      {/* Add Peers to Group Dialog */}
+      <Dialog open={addPeersGroupId !== null} onOpenChange={(open) => !open && setAddPeersGroupId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Peers to Group</DialogTitle>
+            <DialogDescription>
+              Select peers to add to this group. Existing members are not shown.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4 max-h-64 overflow-y-auto">
+            {peers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No peers available.</p>
+            ) : (
+              peers.map((p) => (
+                <label key={p.id} className="flex items-center gap-3 p-2 rounded hover:bg-accent cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedPeerIds.includes(p.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedPeerIds((prev) => [...prev, p.id]);
+                      } else {
+                        setSelectedPeerIds((prev) => prev.filter((id) => id !== p.id));
+                      }
+                    }}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  <div>
+                    <span className="text-sm font-medium">{p.name}</span>
+                    <p className="text-xs text-muted-foreground">{p.assigned_ip} · {p.peer_type}</p>
+                  </div>
+                </label>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddPeersGroupId(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (addPeersGroupId && selectedPeerIds.length > 0) {
+                  addMembers.mutate({ groupId: addPeersGroupId, peerIds: selectedPeerIds });
+                }
+              }}
+              disabled={addMembers.isPending || selectedPeerIds.length === 0}
+            >
+              {addMembers.isPending ? "Adding..." : `Add ${selectedPeerIds.length} Peer${selectedPeerIds.length !== 1 ? "s" : ""}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

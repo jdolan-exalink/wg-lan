@@ -47,7 +47,7 @@ export function LoginForm() {
           <div className="flex justify-center mb-2">
             <Shield className="h-8 w-8 text-primary" />
           </div>
-          <CardTitle className="text-2xl">WG-LAN</CardTitle>
+          <CardTitle className="text-2xl">NetLoom</CardTitle>
           <CardDescription>Sign in to your admin panel</CardDescription>
         </CardHeader>
         <CardContent>

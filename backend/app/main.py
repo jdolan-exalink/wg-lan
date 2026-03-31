@@ -1,15 +1,16 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.database import Base, SessionLocal, engine
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import auth, dashboard, groups, networks, peers, policies, system, zones
-from app.services.auth_service import create_admin_user
+from app.routers import audit, auth, dashboard, groups, networks, peers, policies, system, users, zones
+from app.services.auth_service import create_admin_user, create_server_config
 
 
 @asynccontextmanager
@@ -17,10 +18,11 @@ async def lifespan(app: FastAPI):
     # Create all tables (Alembic handles migrations, this is a safety net)
     Base.metadata.create_all(bind=engine)
 
-    # Seed default admin user if not present
+    # Seed defaults if not present
     db = SessionLocal()
     try:
         create_admin_user(db)
+        create_server_config(db)
     finally:
         db.close()
 
@@ -28,7 +30,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="WG-LAN",
+    title="NetLoom",
     description="Open-source WireGuard control plane",
     version="0.1.0",
     lifespan=lifespan,
@@ -57,8 +59,17 @@ app.include_router(zones.router)
 app.include_router(groups.router)
 app.include_router(policies.router)
 app.include_router(system.router)
+app.include_router(audit.router)
+app.include_router(users.router)
 
 # Serve built React SPA (production)
 _static_dir = Path(__file__).parent.parent / "static"
 if _static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="spa")
+    # Serve static assets (JS, CSS, etc.)
+    app.mount("/assets", StaticFiles(directory=str(_static_dir / "assets")), name="assets")
+
+    # SPA fallback: serve index.html for all non-API routes
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the React SPA for all non-API routes."""
+        return FileResponse(str(_static_dir / "index.html"))

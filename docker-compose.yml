@@ -1,7 +1,7 @@
 services:
-  wg-lan:
+  netloom:
     build: .
-    container_name: wg-lan
+    container_name: netloom
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -11,16 +11,16 @@ services:
       - net.ipv4.conf.all.src_valid_mark=1
     ports:
       - "51820:51820/udp"   # WireGuard
-      - "5000:5000/tcp"     # Dashboard (restrict to LAN in production)
+      - "7777:7777/tcp"     # Dashboard (restrict to LAN in production)
     volumes:
       - ./data:/app/data          # SQLite DB + backups
       - ./config:/etc/wireguard   # WireGuard configs
     environment:
-      - WG_LAN_SECRET_KEY=${WG_LAN_SECRET_KEY:-change-me-in-production}
-      - WG_LAN_ADMIN_PASSWORD=${WG_LAN_ADMIN_PASSWORD:-admin123}
-      - WG_LAN_SERVER_ENDPOINT=${WG_LAN_SERVER_ENDPOINT:-vpn.example.com}
-      - WG_LAN_SERVER_PORT=${WG_LAN_SERVER_PORT:-51820}
-      - WG_LAN_SUBNET=${WG_LAN_SUBNET:-10.50.0.0/24}
-      - WG_LAN_DB_PATH=/app/data/wg-lan.db
-      - WG_LAN_WG_CONFIG_PATH=/etc/wireguard
-      - WG_LAN_WG_INTERFACE=wg0
+      - NETLOOM_SECRET_KEY=${NETLOOM_SECRET_KEY:-change-me-in-production}
+      - NETLOOM_ADMIN_PASSWORD=${NETLOOM_ADMIN_PASSWORD:-admin123}
+      - NETLOOM_SERVER_ENDPOINT=${NETLOOM_SERVER_ENDPOINT:-vpn.example.com}
+      - NETLOOM_SERVER_PORT=${NETLOOM_SERVER_PORT:-51820}
+      - NETLOOM_SUBNET=${NETLOOM_SUBNET:-100.169.0.0/16}
+      - NETLOOM_DB_PATH=/app/data/netloom.db
+      - NETLOOM_WG_CONFIG_PATH=/etc/wireguard
+      - NETLOOM_WG_INTERFACE=wg0
