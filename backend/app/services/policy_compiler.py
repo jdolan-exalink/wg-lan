@@ -178,14 +178,23 @@ def compile_peer_routes(db: Session, peer_id: int) -> list[str]:
 def compile_client_allowed_ips(db: Session, peer_id: int) -> list[str]:
     """
     Compile the complete AllowedIPs for a client config.
-    Combines zone-based CIDRs + peer routes (branch office LANs).
+    Combines:
+    1. VPN subnet (so peers can reach each other through the tunnel)
+    2. Zone-based CIDRs (LANs the peer is allowed to access)
+    3. Peer routes (branch office LANs via remote_subnets)
+    
     This is what goes into the client's [Peer] AllowedIPs directive.
     """
+    from app.config import settings
+    
+    # Always include the VPN subnet so peers can communicate with each other
+    vpn_subnet = settings.subnet  # e.g., "100.169.0.0/16"
+    
     zone_cidrs = compile_allowed_cidrs(db, peer_id)
     peer_routes_list = compile_peer_routes(db, peer_id)
     
     # Merge and deduplicate
-    all_cidrs = set(zone_cidrs) | set(peer_routes_list)
+    all_cidrs = {vpn_subnet} | set(zone_cidrs) | set(peer_routes_list)
     return sorted(all_cidrs)
 
 
