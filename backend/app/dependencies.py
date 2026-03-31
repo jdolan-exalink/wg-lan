@@ -8,16 +8,16 @@ from app.services.auth_service import verify_token
 
 def get_current_user(
     db: Session = Depends(get_db),
-    wg_lan_token: str | None = Cookie(default=None),
+    netloom_token: str | None = Cookie(default=None),
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Not authenticated",
     )
-    if not wg_lan_token:
+    if not netloom_token:
         raise credentials_exception
 
-    user_id = verify_token(wg_lan_token)
+    user_id = verify_token(netloom_token)
     if user_id is None:
         raise credentials_exception
 

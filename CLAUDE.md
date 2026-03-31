@@ -1,4 +1,4 @@
-# WG-LAN
+# NetLoom
 
 Open-source WireGuard control plane with guided onboarding, managed routing via zones/groups/policies, and basic observability.
 
@@ -20,7 +20,7 @@ Open-source WireGuard control plane with guided onboarding, managed routing via 
 - **Precedence**: deny_manual > allow_manual > deny_group > allow_group > no access
 
 ## Commands
-- Backend dev: `cd backend && uvicorn app.main:app --reload --port 5000`
+- Backend dev: `cd backend && uvicorn app.main:app --reload --port 7777`
 - Frontend dev: `cd frontend && npm run dev`
 - Tests: `cd backend && pytest`
 - Docker: `docker compose up --build`

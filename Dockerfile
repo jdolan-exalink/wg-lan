@@ -36,6 +36,6 @@ RUN chmod +x /entrypoint.sh
 # Create data directory
 RUN mkdir -p /app/data /etc/wireguard
 
-EXPOSE 5000
+EXPOSE 7777
 
 ENTRYPOINT ["/entrypoint.sh"]

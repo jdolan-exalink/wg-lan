@@ -5,7 +5,10 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.models.server_config import ServerConfig
 from app.models.user import User
+from app.utils.ip_utils import get_server_ip
+from app.utils.wg_keygen import safe_generate_keypair
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -46,6 +49,42 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     return user
+
+
+def create_server_config(db: Session) -> None:
+    """Auto-initialize server config on first run if not already present."""
+    existing = db.query(ServerConfig).first()
+    if existing:
+        return
+
+    private_key, public_key = safe_generate_keypair()
+    server_address = get_server_ip(settings.subnet)
+    interface = settings.wg_interface
+
+    # Auto-generate iptables NAT masquerade rules
+    post_up = (
+        f"iptables -A FORWARD -i {interface} -j ACCEPT; "
+        f"iptables -A FORWARD -o {interface} -j ACCEPT; "
+        f"iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE"
+    )
+    post_down = (
+        f"iptables -D FORWARD -i {interface} -j ACCEPT; "
+        f"iptables -D FORWARD -o {interface} -j ACCEPT; "
+        f"iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE"
+    )
+
+    cfg = ServerConfig(
+        interface_name=interface,
+        private_key=private_key,
+        public_key=public_key,
+        listen_port=settings.server_port,
+        address=server_address,
+        endpoint=settings.server_endpoint,
+        post_up=post_up,
+        post_down=post_down,
+    )
+    db.add(cfg)
+    db.commit()
 
 
 def create_admin_user(db: Session) -> None:

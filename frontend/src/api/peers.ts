@@ -16,6 +16,9 @@ export const peersApi = {
   update: (id: number, data: Partial<Peer>) =>
     client.patch<Peer>(`/peers/${id}`, data),
 
+  updateGroups: (id: number, peer_ids: number[]) =>
+    client.post<Peer>(`/peers/${id}/groups`, { peer_ids }),
+
   revoke: (id: number) => client.delete(`/peers/${id}`),
 
   toggle: (id: number) => client.post<Peer>(`/peers/${id}/toggle`),

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { ChangePasswordForm } from "@/components/auth/ChangePasswordForm";
@@ -10,6 +11,7 @@ import { NetworksPage } from "@/pages/NetworksPage";
 import { ZonesPage } from "@/pages/ZonesPage";
 import { GroupsPage } from "@/pages/GroupsPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
+import { SystemPage } from "@/pages/SystemPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,8 +30,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
+      <ThemeProvider>
+        <AuthProvider>
+          <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginForm />} />
             <Route path="/change-password" element={<ChangePasswordForm />} />
@@ -46,11 +49,13 @@ export default function App() {
               <Route path="/zones" element={<ZonesPage />} />
               <Route path="/groups" element={<GroupsPage />} />
               <Route path="/policies" element={<PoliciesPage />} />
+              <Route path="/system" element={<SystemPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

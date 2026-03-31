@@ -22,7 +22,7 @@ from app.services.auth_service import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-COOKIE_NAME = "wg_lan_token"
+COOKIE_NAME = "netloom_token"
 CSRF_COOKIE_NAME = "csrf_token"
 COOKIE_MAX_AGE = 60 * 60 * 24  # 24 hours
 

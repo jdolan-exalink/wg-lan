@@ -9,11 +9,12 @@ const pageTitles: Record<string, string> = {
   "/zones": "Zones",
   "/groups": "Groups",
   "/policies": "Policies",
+  "/system": "System",
 };
 
 export function AppLayout() {
   const { pathname } = useLocation();
-  const title = pageTitles[pathname] ?? "WG-LAN";
+  const title = pageTitles[pathname] ?? "NetLoom";
 
   return (
     <div className="flex h-screen overflow-hidden">

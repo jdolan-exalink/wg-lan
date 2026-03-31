@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WG-LAN</title>
+    <title>NetLoom</title>
+    <script>
+      // Prevent flash of unstyled content
+      const theme = localStorage.getItem("netloom-theme") || "dark";
+      document.documentElement.classList.add(theme);
+    </script>
   </head>
   <body>
     <div id="root"></div>
