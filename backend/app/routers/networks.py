@@ -21,7 +21,7 @@ def list_networks(
     db: Session = Depends(get_db),
     _: User = Depends(require_password_changed),
 ):
-    return network_service.list_networks(db)
+    return network_service.list_networks_with_peers(db)
 
 
 @router.get("/{network_id}", response_model=NetworkResponse)

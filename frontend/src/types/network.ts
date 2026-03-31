@@ -3,7 +3,16 @@ export interface Network {
   name: string;
   subnet: string;
   description: string | null;
+  network_type: "lan" | "vpn";
   is_default: boolean;
+  peer_count: number;
+  peers: Array<{
+    id: number;
+    name: string;
+    peer_type: string;
+    assigned_ip: string;
+    device_type: string | null;
+  }>;
 }
 
 export interface Zone {

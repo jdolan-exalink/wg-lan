@@ -18,9 +18,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import { formatHandshake, formatBytes } from "@/lib/utils";
 import {
-  Plus, Download, QrCode, RotateCcw, Power, Trash2,
+  Plus, Download, QrCode, RotateCcw, Trash2,
   Laptop, Smartphone, Router, Server, ChevronLeft, ChevronRight,
   Shield,
 } from "lucide-react";
@@ -87,7 +88,7 @@ const rwSchema = z.object({
   name: z.string().min(1, "Required"),
   device_type: z.enum(["laptop", "ios", "android", "server"]),
   tunnel_mode: z.enum(["full", "split"]),
-  network_id: z.coerce.number().min(1, "Select a network"),
+  network_id: z.coerce.number().optional().nullable(),
   dns: z.string().optional(),
   group_ids: z.array(z.coerce.number()),
   persistent_keepalive: z.coerce.number().default(25),
@@ -96,7 +97,7 @@ const rwSchema = z.object({
 const boSchema = z.object({
   name: z.string().min(1, "Required"),
   device_type: z.enum(["router", "server"]),
-  network_id: z.coerce.number().min(1, "Select a network"),
+  network_id: z.coerce.number().optional().nullable(),
   remote_subnets: z.array(z.object({ cidr: z.string().regex(/^\d+\.\d+\.\d+\.\d+\/\d+$/, "Invalid CIDR") })).min(1),
   dns: z.string().optional(),
   group_ids: z.array(z.coerce.number()),
@@ -120,6 +121,7 @@ export function PeersPage() {
   const [qrPeer, setQrPeer] = useState<Peer | null>(null);
   const [editGroupsPeer, setEditGroupsPeer] = useState<Peer | null>(null);
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([]);
+  const [revokePeer, setRevokePeer] = useState<Peer | null>(null);
 
   const { data: peers = [] } = useQuery({
     queryKey: ["peers"],
@@ -156,7 +158,14 @@ export function PeersPage() {
 
   const revoke = useMutation({
     mutationFn: (id: number) => peersApi.revoke(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["peers"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["peers"] });
+      setRevokePeer(null);
+    },
+    onError: (error: any) => {
+      console.error("Failed to revoke peer:", error);
+      alert(error.response?.data?.detail || "Failed to revoke peer");
+    },
   });
 
   const regenKeys = useMutation({
@@ -196,8 +205,8 @@ export function PeersPage() {
               <tr className="border-b bg-muted/40">
                 <th className="text-left px-4 py-2 font-medium">Name</th>
                 <th className="text-left px-4 py-2 font-medium">Type</th>
-                <th className="text-left px-4 py-2 font-medium">LAN</th>
-                <th className="text-left px-4 py-2 font-medium">IP</th>
+                <th className="text-left px-4 py-2 font-medium">VPN IP</th>
+                <th className="text-left px-4 py-2 font-medium">Shared LAN</th>
                 <th className="text-left px-4 py-2 font-medium">Tunnel</th>
                 <th className="text-left px-4 py-2 font-medium">Status</th>
                 <th className="text-right px-4 py-2 font-medium">Actions</th>
@@ -215,13 +224,27 @@ export function PeersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2 text-muted-foreground capitalize">{p.peer_type.replace("_", " ")}</td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{networkMap.get(p.network_id) ?? `#${p.network_id}`}</td>
-                  <td className="px-4 py-2 font-mono text-xs">{p.assigned_ip}</td>
+                  <td className="px-4 py-2 font-mono text-xs">{p.assigned_ip.split('/')[0]}</td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">
+                    {p.peer_type === "branch_office" && p.remote_subnets && p.remote_subnets.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {p.remote_subnets.map((subnet, i) => (
+                          <Badge key={i} variant="outline" className="text-[10px] px-1.5 py-0">{subnet}</Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2">
                     <Badge variant={p.tunnel_mode === "full" ? "default" : "outline"}>{p.tunnel_mode}</Badge>
                   </td>
                   <td className="px-4 py-2">
-                    {p.is_enabled ? <Badge variant="success">Enabled</Badge> : <Badge variant="secondary">Disabled</Badge>}
+                    <Switch
+                      checked={p.is_enabled}
+                      onCheckedChange={() => toggle.mutate(p.id)}
+                      disabled={toggle.isPending}
+                    />
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center justify-end gap-1">
@@ -231,7 +254,6 @@ export function PeersPage() {
                         title="Edit groups"
                         onClick={() => {
                           setEditGroupsPeer(p);
-                          // TODO: load current groups for this peer
                           setSelectedGroupIds([]);
                         }}
                       >
@@ -248,10 +270,7 @@ export function PeersPage() {
                       <Button variant="ghost" size="icon" title="Regenerate keys" onClick={() => regenKeys.mutate(p.id)}>
                         <RotateCcw className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" title={p.is_enabled ? "Disable" : "Enable"} onClick={() => toggle.mutate(p.id)}>
-                        <Power className={`h-4 w-4 ${p.is_enabled ? "text-green-600" : "text-muted-foreground"}`} />
-                      </Button>
-                      <Button variant="ghost" size="icon" title="Revoke" onClick={() => { if (confirm(`Revoke ${p.name}?`)) revoke.mutate(p.id); }}>
+                      <Button variant="ghost" size="icon" title="Delete peer" onClick={() => setRevokePeer(p)}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
@@ -311,6 +330,34 @@ export function PeersPage() {
               disabled={updatePeerGroups.isPending}
             >
               {updatePeerGroups.isPending ? "Saving..." : "Save Groups"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={revokePeer !== null} onOpenChange={(open) => !open && setRevokePeer(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Peer</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{revokePeer?.name}</strong>? This action will disable the peer and remove it from the WireGuard configuration.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokePeer(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (revokePeer) {
+                  revoke.mutate(revokePeer.id);
+                }
+              }}
+              disabled={revoke.isPending}
+            >
+              {revoke.isPending ? "Deleting..." : "Delete Peer"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -382,10 +429,11 @@ function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel:
             {step === 1 && (
               <div className="space-y-3">
                 <div className="space-y-1">
-                  <Label>VPN Network</Label>
+                  <Label>LAN Network (optional)</Label>
+                  <p className="text-xs text-muted-foreground">Associate with a LAN network if this peer belongs to a branch office</p>
                   <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" {...register("network_id")}>
-                    <option value="">Select network...</option>
-                    {networks.map((n) => <option key={n.id} value={n.id}>{n.name} ({n.subnet})</option>)}
+                    <option value="">None — VPN IP only</option>
+                    {networks.filter(n => n.network_type === "lan").map((n) => <option key={n.id} value={n.id}>{n.name} ({n.subnet})</option>)}
                   </select>
                   {errors.network_id && <p className="text-xs text-destructive">{errors.network_id.message}</p>}
                 </div>
@@ -512,10 +560,11 @@ function BranchOfficeWizard({ onDone, onCancel }: { onDone: () => void; onCancel
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <Label>VPN Network</Label>
+                  <Label>LAN Network (optional)</Label>
+                  <p className="text-xs text-muted-foreground">Associate with a LAN network if this peer belongs to a branch office</p>
                   <select className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" {...register("network_id")}>
-                    <option value="">Select network...</option>
-                    {networks.map((n) => <option key={n.id} value={n.id}>{n.name} ({n.subnet})</option>)}
+                    <option value="">None — VPN IP only</option>
+                    {networks.filter(n => n.network_type === "lan").map((n) => <option key={n.id} value={n.id}>{n.name} ({n.subnet})</option>)}
                   </select>
                   {errors.network_id && <p className="text-xs text-destructive">{errors.network_id.message}</p>}
                 </div>

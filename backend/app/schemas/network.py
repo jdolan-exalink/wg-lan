@@ -7,6 +7,7 @@ class NetworkCreate(BaseModel):
     name: str
     subnet: str
     description: str | None = None
+    network_type: str = "lan"  # 'lan' or 'vpn'
     is_default: bool = False
 
     @field_validator("subnet")
@@ -20,6 +21,7 @@ class NetworkCreate(BaseModel):
 class NetworkUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    network_type: str | None = None
     is_default: bool | None = None
 
 
@@ -28,7 +30,10 @@ class NetworkResponse(BaseModel):
     name: str
     subnet: str
     description: str | None
+    network_type: str
     is_default: bool
+    peer_count: int = 0
+    peers: list[dict] = []
 
     model_config = {"from_attributes": True}
 

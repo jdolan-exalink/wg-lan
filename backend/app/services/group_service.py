@@ -61,3 +61,23 @@ def remove_member(db: Session, group_id: int, peer_id: int) -> bool:
 
 def get_member_count(db: Session, group_id: int) -> int:
     return db.query(PeerGroupMember).filter(PeerGroupMember.group_id == group_id).count()
+
+
+def get_members(db: Session, group_id: int) -> list[dict]:
+    """Get all peer members of a group with their details."""
+    from app.models.peer import Peer
+    members = (
+        db.query(PeerGroupMember)
+        .join(Peer, PeerGroupMember.peer_id == Peer.id)
+        .filter(PeerGroupMember.group_id == group_id)
+        .all()
+    )
+    return [
+        {
+            "peer_id": m.peer_id,
+            "peer_name": m.peer.name,
+            "peer_type": m.peer.peer_type,
+            "assigned_ip": m.peer.assigned_ip,
+        }
+        for m in members
+    ]

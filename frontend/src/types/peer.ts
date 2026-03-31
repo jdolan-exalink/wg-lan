@@ -9,7 +9,7 @@ export interface Peer {
   device_type: DeviceType | null;
   public_key: string;
   assigned_ip: string;
-  network_id: number;
+  network_id: number | null;
   tunnel_mode: TunnelMode;
   remote_subnets: string[];
   dns: string | null;
@@ -37,7 +37,7 @@ export interface RoadWarriorCreate {
   name: string;
   device_type: DeviceType;
   tunnel_mode: TunnelMode;
-  network_id: number;
+  network_id?: number | null;
   dns?: string;
   group_ids: number[];
   persistent_keepalive: number;
@@ -46,7 +46,7 @@ export interface RoadWarriorCreate {
 export interface BranchOfficeCreate {
   name: string;
   device_type: "router" | "server";
-  network_id: number;
+  network_id?: number | null;
   remote_subnets: string[];
   dns?: string;
   group_ids: number[];

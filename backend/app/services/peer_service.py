@@ -1,5 +1,4 @@
 import json
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -11,6 +10,7 @@ from app.services import wg_service
 from app.services.policy_compiler import compile_allowed_cidrs
 from app.utils.ip_utils import get_next_available_ip
 from app.utils.wg_keygen import safe_generate_keypair
+from app.config import settings
 
 
 def _get_used_ips(db: Session, exclude_peer_id: int | None = None) -> list[str]:
@@ -26,12 +26,15 @@ def _assign_groups(db: Session, peer_id: int, group_ids: list[int]) -> None:
 
 
 def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) -> Peer:
-    network = db.query(Network).filter(Network.id == data.network_id).first()
-    if not network:
-        raise ValueError(f"Network {data.network_id} not found")
+    # Validate network_id if provided (optional - only for LAN association)
+    if data.network_id:
+        network = db.query(Network).filter(Network.id == data.network_id).first()
+        if not network:
+            raise ValueError(f"Network {data.network_id} not found")
 
+    # Assign VPN IP from global settings subnet
     used_ips = _get_used_ips(db)
-    assigned_ip = get_next_available_ip(network.subnet, used_ips)
+    assigned_ip = get_next_available_ip(settings.subnet, used_ips)
     private_key, public_key = safe_generate_keypair()
 
     peer = Peer(
@@ -65,12 +68,15 @@ def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) ->
 
 
 def create_branch_office(db: Session, data: BranchOfficeCreate, created_by: int) -> Peer:
-    network = db.query(Network).filter(Network.id == data.network_id).first()
-    if not network:
-        raise ValueError(f"Network {data.network_id} not found")
+    # Validate network_id if provided (optional - only for LAN association)
+    if data.network_id:
+        network = db.query(Network).filter(Network.id == data.network_id).first()
+        if not network:
+            raise ValueError(f"Network {data.network_id} not found")
 
+    # Assign VPN IP from global settings subnet
     used_ips = _get_used_ips(db)
-    assigned_ip = get_next_available_ip(network.subnet, used_ips)
+    assigned_ip = get_next_available_ip(settings.subnet, used_ips)
     private_key, public_key = safe_generate_keypair()
 
     peer = Peer(
@@ -126,16 +132,13 @@ def update_peer(db: Session, peer: Peer, data: PeerUpdate) -> Peer:
     return peer
 
 
-def revoke_peer(db: Session, peer: Peer) -> Peer:
-    peer.is_enabled = False
-    peer.revoked_at = datetime.now(timezone.utc)
+def revoke_peer(db: Session, peer: Peer) -> None:
+    db.delete(peer)
     db.commit()
-    db.refresh(peer)
     try:
         wg_service.apply_config(db)
     except Exception:
         pass
-    return peer
 
 
 def toggle_peer(db: Session, peer: Peer) -> Peer:

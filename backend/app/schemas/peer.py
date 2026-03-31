@@ -10,7 +10,7 @@ class RoadWarriorCreate(BaseModel):
     name: str
     device_type: Literal["laptop", "ios", "android", "server"] = "laptop"
     tunnel_mode: Literal["full", "split"] = "split"
-    network_id: int
+    network_id: int | None = None
     dns: str | None = None
     group_ids: list[int] = []
     persistent_keepalive: int = 25
@@ -19,7 +19,7 @@ class RoadWarriorCreate(BaseModel):
 class BranchOfficeCreate(BaseModel):
     name: str
     device_type: Literal["router", "server"] = "router"
-    network_id: int
+    network_id: int | None = None
     remote_subnets: list[str]
     dns: str | None = None
     group_ids: list[int] = []
@@ -54,7 +54,7 @@ class PeerResponse(BaseModel):
     device_type: str | None
     public_key: str
     assigned_ip: str
-    network_id: int
+    network_id: int | None
     tunnel_mode: str
     remote_subnets: list[str]
     dns: str | None

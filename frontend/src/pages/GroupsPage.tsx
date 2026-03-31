@@ -43,6 +43,14 @@ export function GroupsPage() {
     enabled: addPeersGroupId !== null,
   });
 
+  const { data: existingMembers = [] } = useQuery({
+    queryKey: ["group-members", addPeersGroupId],
+    queryFn: () => addPeersGroupId ? groupsApi.getMembers(addPeersGroupId).then((r) => r.data) : [],
+    enabled: addPeersGroupId !== null,
+  });
+
+  const existingMemberIds = new Set(existingMembers.map((m) => m.peer_id));
+
   const create = useMutation({
     mutationFn: (data: FormData) => groupsApi.create(data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["groups"] }); setShowForm(false); },
@@ -59,8 +67,19 @@ export function GroupsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["groups"] });
       qc.invalidateQueries({ queryKey: ["peers"] });
+      qc.invalidateQueries({ queryKey: ["group-members"] });
       setAddPeersGroupId(null);
       setSelectedPeerIds([]);
+    },
+  });
+
+  const removeMember = useMutation({
+    mutationFn: ({ groupId, peerId }: { groupId: number; peerId: number }) =>
+      groupsApi.removeMember(groupId, peerId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["groups"] });
+      qc.invalidateQueries({ queryKey: ["peers"] });
+      qc.invalidateQueries({ queryKey: ["group-members"] });
     },
   });
 

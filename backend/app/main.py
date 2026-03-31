@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.database import Base, SessionLocal, engine
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import audit, auth, dashboard, groups, networks, peers, policies, system, users, zones
+from app.routers import audit, auth, connection_logs, dashboard, groups, networks, peers, policies, system, users, version, zones
 from app.services.auth_service import create_admin_user, create_server_config
 
 
@@ -61,6 +61,8 @@ app.include_router(policies.router)
 app.include_router(system.router)
 app.include_router(audit.router)
 app.include_router(users.router)
+app.include_router(connection_logs.router)
+app.include_router(version.router)
 
 # Serve built React SPA (production)
 _static_dir = Path(__file__).parent.parent / "static"

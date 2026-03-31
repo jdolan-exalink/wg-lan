@@ -7,6 +7,7 @@ Uses 'wg syncconf' to apply config changes without dropping existing connections
 
 import json
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.peer import Peer
 from app.services.config_service import build_server_allowed_ips, generate_full_server_config
+from app.services import connection_log_service
 
 
 ONLINE_THRESHOLD_SECONDS = 180
@@ -85,16 +87,52 @@ def apply_config(db: Session) -> None:
 
     # If interface doesn't exist, create it with wg-quick up first
     if not is_interface_up():
+        start_time = time.time()
         result = _run(["wg-quick", "up", settings.wg_interface])
+        duration_ms = int((time.time() - start_time) * 1000)
         if result.returncode != 0:
+            connection_log_service.log_connection(
+                db=db,
+                event_type="interface_up",
+                message=f"Failed to bring up WireGuard interface: {result.stderr.strip()}",
+                severity="critical",
+                details={"stderr": result.stderr.strip(), "returncode": result.returncode},
+                duration_ms=duration_ms,
+            )
             raise RuntimeError(f"wg-quick up failed: {result.stderr.strip()}")
+        connection_log_service.log_connection(
+            db=db,
+            event_type="interface_up",
+            message="WireGuard interface brought up successfully",
+            severity="info",
+            duration_ms=duration_ms,
+        )
 
+    start_time = time.time()
     result = _run(
         ["wg", "syncconf", settings.wg_interface, "/dev/stdin"],
         input_data=stripped_config,
     )
+    duration_ms = int((time.time() - start_time) * 1000)
     if result.returncode != 0:
+        connection_log_service.log_connection(
+            db=db,
+            event_type="config_applied",
+            message=f"Failed to apply WireGuard config: {result.stderr.strip()}",
+            severity="error",
+            details={"stderr": result.stderr.strip(), "returncode": result.returncode},
+            duration_ms=duration_ms,
+        )
         raise RuntimeError(f"wg syncconf failed: {result.stderr.strip()}")
+    
+    connection_log_service.log_connection(
+        db=db,
+        event_type="config_applied",
+        message=f"WireGuard config applied successfully ({len(peers)} peers)",
+        severity="info",
+        details={"peer_count": len(peers)},
+        duration_ms=duration_ms,
+    )
 
 
 def ensure_interface_up(db: Session) -> None:
@@ -147,13 +185,17 @@ def get_peer_statuses(interface: str = "") -> dict[str, PeerStatus]:
 
 
 def bring_up() -> None:
+    start_time = time.time()
     result = _run(["wg-quick", "up", settings.wg_interface])
+    duration_ms = int((time.time() - start_time) * 1000)
     if result.returncode != 0:
         raise RuntimeError(f"wg-quick up failed: {result.stderr.strip()}")
 
 
 def bring_down() -> None:
+    start_time = time.time()
     result = _run(["wg-quick", "down", settings.wg_interface])
+    duration_ms = int((time.time() - start_time) * 1000)
     if result.returncode != 0:
         raise RuntimeError(f"wg-quick down failed: {result.stderr.strip()}")
 

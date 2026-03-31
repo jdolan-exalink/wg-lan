@@ -17,11 +17,11 @@ export function AppLayout() {
   const title = pageTitles[pathname] ?? "NetLoom";
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="min-h-screen bg-surface-dim">
       <Sidebar />
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className="ml-64">
         <Header title={title} />
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="pt-24 px-8 pb-16 min-h-screen">
           <Outlet />
         </main>
       </div>

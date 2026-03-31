@@ -39,6 +39,8 @@ export const groupsApi = {
     client.post(`/groups/${group_id}/members`, { peer_ids }),
   removeMember: (group_id: number, peer_id: number) =>
     client.delete(`/groups/${group_id}/members/${peer_id}`),
+  getMembers: (group_id: number) =>
+    client.get<Array<{ peer_id: number; peer_name: string; peer_type: string; assigned_ip: string }>>(`/groups/${group_id}/members`),
 };
 
 export const policiesApi = {

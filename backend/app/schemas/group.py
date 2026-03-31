@@ -22,3 +22,10 @@ class PeerGroupResponse(BaseModel):
 
 class AddMembersRequest(BaseModel):
     peer_ids: list[int]
+
+
+class GroupMemberResponse(BaseModel):
+    peer_id: int
+    peer_name: str
+    peer_type: str
+    assigned_ip: str

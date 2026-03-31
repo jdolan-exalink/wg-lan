@@ -12,6 +12,7 @@ import { ZonesPage } from "@/pages/ZonesPage";
 import { GroupsPage } from "@/pages/GroupsPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
 import { SystemPage } from "@/pages/SystemPage";
+import { LogsPage } from "@/pages/LogsPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -50,6 +51,7 @@ export default function App() {
               <Route path="/groups" element={<GroupsPage />} />
               <Route path="/policies" element={<PoliciesPage />} />
               <Route path="/system" element={<SystemPage />} />
+              <Route path="/logs" element={<LogsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

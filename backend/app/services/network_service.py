@@ -1,12 +1,76 @@
 from sqlalchemy.orm import Session
 
 from app.models.network import Network
+from app.models.peer import Peer
 from app.schemas.network import NetworkCreate, NetworkUpdate
 from app.utils.ip_utils import subnets_overlap
 
 
 def list_networks(db: Session) -> list[Network]:
     return db.query(Network).order_by(Network.name).all()
+
+
+def get_network(db: Session, network_id: int) -> Network | None:
+    return db.query(Network).filter(Network.id == network_id).first()
+
+
+def get_network_with_peers(db: Session, network_id: int) -> dict:
+    """Get network with associated peer information."""
+    network = get_network(db, network_id)
+    if not network:
+        return {}
+
+    peers = db.query(Peer).filter(Peer.network_id == network_id).all()
+    peer_info = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "peer_type": p.peer_type,
+            "assigned_ip": p.assigned_ip,
+            "device_type": p.device_type,
+        }
+        for p in peers
+    ]
+
+    return {
+        "id": network.id,
+        "name": network.name,
+        "subnet": network.subnet,
+        "description": network.description,
+        "network_type": network.network_type,
+        "is_default": network.is_default,
+        "peer_count": len(peers),
+        "peers": peer_info,
+    }
+
+
+def list_networks_with_peers(db: Session) -> list[dict]:
+    """List all networks with their associated peer information."""
+    networks = list_networks(db)
+    result = []
+    for network in networks:
+        peers = db.query(Peer).filter(Peer.network_id == network.id).all()
+        peer_info = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "peer_type": p.peer_type,
+                "assigned_ip": p.assigned_ip,
+                "device_type": p.device_type,
+            }
+            for p in peers
+        ]
+        result.append({
+            "id": network.id,
+            "name": network.name,
+            "subnet": network.subnet,
+            "description": network.description,
+            "network_type": network.network_type,
+            "is_default": network.is_default,
+            "peer_count": len(peers),
+            "peers": peer_info,
+        })
+    return result
 
 
 def get_network(db: Session, network_id: int) -> Network | None:

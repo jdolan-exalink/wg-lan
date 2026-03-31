@@ -1,7 +1,6 @@
 import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { LogOut, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 
 interface HeaderProps {
@@ -18,18 +17,24 @@ export function Header({ title }: HeaderProps) {
   };
 
   return (
-    <header className="flex items-center justify-between h-14 px-6 border-b bg-card">
-      <h1 className="font-semibold text-lg">{title}</h1>
-      <div className="flex items-center gap-3">
-        <ThemeToggle />
-        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <User className="h-4 w-4" />
-          <span>{user?.username}</span>
+    <header className="sticky top-0 z-40 flex justify-between items-center h-16 px-8 bg-surface-dim/80 backdrop-blur-xl transition-all duration-300">
+      <div className="flex items-center gap-4">
+        <h2 className="font-headline font-bold text-lg text-on-surface">{title}</h2>
+        <div className="h-4 w-px bg-outline-variant/30" />
+        <p className="font-label text-xs text-tertiary">NODE-01</p>
+      </div>
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleLogout}
+            className="text-outline hover:text-on-surface transition-colors"
+          >
+            <span className="material-symbols-outlined text-xl">logout</span>
+          </Button>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleLogout}>
-          <LogOut className="h-4 w-4" />
-          <span className="sr-only">Logout</span>
-        </Button>
       </div>
     </header>
   );

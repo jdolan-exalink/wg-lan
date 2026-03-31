@@ -123,7 +123,7 @@ def update_peer_groups(
     return PeerResponse.from_orm_peer(peer)
 
 
-@router.delete("/{peer_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{peer_id}")
 def revoke_peer(
     peer_id: int,
     db: Session = Depends(get_db),
@@ -134,6 +134,7 @@ def revoke_peer(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     peer_service.revoke_peer(db, peer)
     audit_log(db, "peer.revoke", user_id=current_user.id, target_type="peer", target_id=peer_id, details={"name": peer.name})
+    return {"message": f"Peer '{peer.name}' deleted successfully"}
 
 
 @router.post("/{peer_id}/toggle", response_model=PeerResponse)

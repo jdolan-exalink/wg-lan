@@ -15,8 +15,8 @@ class Peer(Base):
     private_key: Mapped[str] = mapped_column(String, nullable=False)
     public_key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     preshared_key: Mapped[str | None] = mapped_column(String, nullable=True)
-    assigned_ip: Mapped[str] = mapped_column(String, unique=True, nullable=False)  # e.g., 10.50.0.2/32
-    network_id: Mapped[int] = mapped_column(Integer, ForeignKey("networks.id"), nullable=False)
+    assigned_ip: Mapped[str] = mapped_column(String, unique=True, nullable=False)  # e.g., 100.169.0.2/32
+    network_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("networks.id"), nullable=True)
     tunnel_mode: Mapped[str] = mapped_column(String, nullable=False, default="split")  # 'full' or 'split'
     remote_subnets: Mapped[str | None] = mapped_column(String, nullable=True)  # JSON array, branch_office only
     dns: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -19,7 +19,7 @@ export const peersApi = {
   updateGroups: (id: number, peer_ids: number[]) =>
     client.post<Peer>(`/peers/${id}/groups`, { peer_ids }),
 
-  revoke: (id: number) => client.delete(`/peers/${id}`),
+  revoke: (id: number) => client.delete<{ message: string }>(`/peers/${id}`),
 
   toggle: (id: number) => client.post<Peer>(`/peers/${id}/toggle`),
 

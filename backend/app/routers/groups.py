@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_password_changed
 from app.models.user import User
-from app.schemas.group import AddMembersRequest, PeerGroupCreate, PeerGroupResponse, PeerGroupUpdate
+from app.schemas.group import AddMembersRequest, GroupMemberResponse, PeerGroupCreate, PeerGroupResponse, PeerGroupUpdate
 from app.services import group_service
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
@@ -105,3 +105,15 @@ def remove_member(
     removed = group_service.remove_member(db, group_id, peer_id)
     if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+
+
+@router.get("/{group_id}/members", response_model=list[GroupMemberResponse])
+def get_group_members(
+    group_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    group = group_service.get_group(db, group_id)
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return group_service.get_members(db, group_id)
