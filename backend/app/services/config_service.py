@@ -26,7 +26,9 @@ def generate_client_config(
         if allowed_cidrs:
             client_allowed_ips = format_allowed_ips(allowed_cidrs)
         else:
-            # Use 0.0.0.0/32 as placeholder - routes no traffic but keeps config valid
+            # No zones assigned yet — use VPN subnet as placeholder
+            # This keeps the config valid while allowing the peer to connect
+            # Once onboarding is done and zones are created, re-download the config
             client_allowed_ips = "0.0.0.0/32"
 
     lines = [

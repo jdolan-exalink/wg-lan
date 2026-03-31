@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.database import Base, SessionLocal, engine
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import audit, auth, connection_logs, dashboard, groups, networks, peers, policies, system, users, version, zones
+from app.routers import audit, auth, connection_logs, dashboard, groups, networks, onboarding, peers, policies, system, users, version, zones
 from app.services.auth_service import create_admin_user, create_server_config
 
 
@@ -52,6 +52,7 @@ app.add_middleware(CSRFMiddleware)
 
 # API routers
 app.include_router(auth.router)
+app.include_router(onboarding.router)
 app.include_router(dashboard.router)
 app.include_router(peers.router)
 app.include_router(networks.router)

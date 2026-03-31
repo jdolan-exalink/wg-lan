@@ -36,7 +36,7 @@ export function ChangePasswordForm() {
     try {
       await authApi.changePassword(data.current_password, data.new_password);
       await refresh();
-      navigate("/");
+      navigate("/onboarding");
     } catch (err: any) {
       setError(err.response?.data?.detail ?? "Failed to change password");
     }

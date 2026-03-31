@@ -5,6 +5,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { ChangePasswordForm } from "@/components/auth/ChangePasswordForm";
+import { OnboardingWizard } from "@/components/auth/OnboardingWizard";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { PeersPage } from "@/pages/PeersPage";
 import { NetworksPage } from "@/pages/NetworksPage";
@@ -25,6 +26,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   if (isLoading) return <div className="flex h-screen items-center justify-center text-muted-foreground">Loading...</div>;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (user?.must_change_password) return <Navigate to="/change-password" replace />;
+  if (!user?.onboarding_completed) return <Navigate to="/onboarding" replace />;
   return <>{children}</>;
 }
 
@@ -37,6 +39,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<LoginForm />} />
             <Route path="/change-password" element={<ChangePasswordForm />} />
+            <Route path="/onboarding" element={<OnboardingWizard />} />
             <Route
               element={
                 <RequireAuth>

@@ -61,17 +61,10 @@ def create_server_config(db: Session) -> None:
     server_address = get_server_ip(settings.subnet)
     interface = settings.wg_interface
 
-    # Auto-generate iptables NAT masquerade rules
-    post_up = (
-        f"iptables -A FORWARD -i {interface} -j ACCEPT; "
-        f"iptables -A FORWARD -o {interface} -j ACCEPT; "
-        f"iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE"
-    )
-    post_down = (
-        f"iptables -D FORWARD -i {interface} -j ACCEPT; "
-        f"iptables -D FORWARD -o {interface} -j ACCEPT; "
-        f"iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE"
-    )
+    # iptables rules are now managed in entrypoint.sh for Docker compatibility
+    # PostUp/PostDown are left empty to avoid hardcoded eth0 references
+    post_up = ""
+    post_down = ""
 
     cfg = ServerConfig(
         interface_name=interface,

@@ -17,7 +17,7 @@ from app.schemas.group import AddMembersRequest
 from app.services import peer_service
 from app.services.audit_service import log as audit_log
 from app.services.config_service import generate_client_config
-from app.services.policy_compiler import compile_allowed_cidrs, compile_override_summary
+from app.services.policy_compiler import compile_allowed_cidrs, compile_client_allowed_ips, compile_override_summary
 from app.utils.qr import generate_qr_png
 
 router = APIRouter(prefix="/api/peers", tags=["peers"])
@@ -173,7 +173,7 @@ def download_config(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     server_cfg = _get_server_config(db)
-    allowed_cidrs = compile_allowed_cidrs(db, peer_id)
+    allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     config_str = generate_client_config(peer, server_cfg, allowed_cidrs)
     filename = f"{peer.name.lower().replace(' ', '-')}.conf"
     return Response(
@@ -193,7 +193,7 @@ def get_qrcode(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     server_cfg = _get_server_config(db)
-    allowed_cidrs = compile_allowed_cidrs(db, peer_id)
+    allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     config_str = generate_client_config(peer, server_cfg, allowed_cidrs)
     png_bytes = generate_qr_png(config_str)
     return Response(content=png_bytes, media_type="image/png")

@@ -48,6 +48,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     must_change_password: bool
+    onboarding_completed: bool
     is_admin: bool
     last_login_at: datetime | None = None
     created_at: datetime | None = None

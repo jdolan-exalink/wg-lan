@@ -51,5 +51,27 @@ finally:
     db.close()
 "
 
+# Fix iptables rules for Docker - detect the correct outbound interface
+echo "==> Setting up iptables for Docker networking..."
+OUTBOUND_IFACE=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'dev \K\S+' || echo 'eth0')
+echo "    Outbound interface: $OUTBOUND_IFACE"
+
+# Clear old NetLoom rules (idempotent)
+iptables -D FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -D FORWARD -o wg0 -j ACCEPT 2>/dev/null || true
+iptables -t nat -D POSTROUTING -o $OUTBOUND_IFACE -j MASQUERADE 2>/dev/null || true
+
+# Add forwarding rules
+iptables -A FORWARD -i wg0 -j ACCEPT
+iptables -A FORWARD -o wg0 -j ACCEPT
+iptables -t nat -A POSTROUTING -o $OUTBOUND_IFACE -j MASQUERADE
+
+# IP forwarding is already enabled via docker-compose sysctls
+# sysctl is not available in python:3.12-slim, but net.ipv4.ip_forward=1
+# is set in docker-compose.yml, so we skip it here
+
+echo "    iptables rules applied"
+echo "    IP forwarding enabled (via docker-compose sysctls)"
+
 echo "==> Starting NetLoom dashboard on :7777"
 exec uvicorn app.main:app --host 0.0.0.0 --port 7777 --workers 1
