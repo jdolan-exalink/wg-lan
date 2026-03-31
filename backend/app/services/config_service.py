@@ -68,16 +68,10 @@ def generate_mikrotik_config(
 ) -> str:
     """
     Build a MikroTik RouterOS WireGuard import file.
-    MikroTik uses a different format than standard WireGuard .conf files.
-    
-    Format:
-    interface: wireguard1
-    public-key: <server-public-key>
-    private-key: <client-private-key>
-    allowed-address: <cidrs>
-    client-address: <peer-ip>
-    client-endpoint: <endpoint>:<port>
-    client-keepalive: <keepalive>
+    MikroTik accepts standard WireGuard .conf format (ROS 7.19+) but is very strict:
+    - NO comments (#) at the start
+    - NO extra whitespace
+    - Clean [Interface] and [Peer] sections only
     """
     if peer.tunnel_mode == "full":
         client_allowed_ips = "0.0.0.0/0, ::/0"
@@ -87,22 +81,31 @@ def generate_mikrotik_config(
         else:
             client_allowed_ips = "0.0.0.0/32"
 
+    # Standard WireGuard .conf format — MikroTik imports this directly
     lines = [
-        f"interface: wireguard1",
-        f"public-key: {server_config.public_key}",
-        f"private-key: {peer.private_key}",
-        f"allowed-address: {client_allowed_ips}",
-        f"client-address: {peer.assigned_ip}",
-        f"client-endpoint: {server_config.endpoint}:{server_config.listen_port}",
+        "[Interface]",
+        f"Address = {peer.assigned_ip}",
+        f"PrivateKey = {peer.private_key}",
     ]
-    
-    if peer.persistent_keepalive and peer.persistent_keepalive > 0:
-        lines.append(f"client-keepalive: {peer.persistent_keepalive}")
-    
     if peer.dns:
-        lines.append(f"client-dns: {peer.dns}")
+        lines.append(f"DNS = {peer.dns}")
     elif server_config.dns:
-        lines.append(f"client-dns: {server_config.dns}")
+        lines.append(f"DNS = {server_config.dns}")
+
+    lines += [
+        "",
+        "[Peer]",
+        f"PublicKey = {server_config.public_key}",
+    ]
+    if peer.preshared_key:
+        lines.append(f"PresharedKey = {peer.preshared_key}")
+
+    lines += [
+        f"AllowedIPs = {client_allowed_ips}",
+        f"Endpoint = {server_config.endpoint}:{server_config.listen_port}",
+    ]
+    if peer.persistent_keepalive and peer.persistent_keepalive > 0:
+        lines.append(f"PersistentKeepalive = {peer.persistent_keepalive}")
 
     return "\n".join(lines) + "\n"
 
