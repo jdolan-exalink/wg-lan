@@ -27,6 +27,8 @@ export const peersApi = {
 
   configUrl: (id: number) => `/api/peers/${id}/config`,
 
+  mikrotikConfigUrl: (id: number) => `/api/peers/${id}/config/mikrotik`,
+
   qrcodeUrl: (id: number) => `/api/peers/${id}/qrcode`,
 
   getPermissions: (id: number) =>

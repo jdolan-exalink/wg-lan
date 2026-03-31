@@ -72,11 +72,18 @@ function QrCodeCard({ peer, onClose }: { peer: Peer; onClose: () => void }) {
         {loading && <p className="text-sm text-muted-foreground">Loading QR code...</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
         {qrSrc && <img src={qrSrc} alt="QR code" className="max-w-xs border rounded" />}
-        <a href={peersApi.configUrl(peer.id)} download={`${peer.name}.conf`}>
-          <Button variant="outline" size="sm">
-            <Download className="h-4 w-4 mr-2" /> Download Config
-          </Button>
-        </a>
+        <div className="flex gap-2">
+          <a href={peersApi.configUrl(peer.id)} download={`${peer.name}.conf`}>
+            <Button variant="outline" size="sm">
+              <Download className="h-4 w-4 mr-2" /> Standard (.conf)
+            </Button>
+          </a>
+          <a href={peersApi.mikrotikConfigUrl(peer.id)} download={`${peer.name}-mikrotik.conf`}>
+            <Button variant="outline" size="sm">
+              <Download className="h-4 w-4 mr-2" /> MikroTik
+            </Button>
+          </a>
+        </div>
       </CardContent>
     </Card>
   );
@@ -260,8 +267,13 @@ export function PeersPage() {
                         <Shield className="h-4 w-4" />
                       </Button>
                       <a href={peersApi.configUrl(p.id)} download={`${p.name}.conf`}>
-                        <Button variant="ghost" size="icon" title="Download config">
+                        <Button variant="ghost" size="icon" title="Download standard config">
                           <Download className="h-4 w-4" />
+                        </Button>
+                      </a>
+                      <a href={peersApi.mikrotikConfigUrl(p.id)} download={`${p.name}-mikrotik.conf`}>
+                        <Button variant="ghost" size="icon" title="Download MikroTik config">
+                          <Router className="h-4 w-4" />
                         </Button>
                       </a>
                       <Button variant="ghost" size="icon" title="Show QR" onClick={() => setQrPeer(p)}>
@@ -493,7 +505,10 @@ function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel:
               </div>
               <div className="flex gap-2">
                 <a href={peersApi.configUrl(createdPeer.id)} download={`${createdPeer.name}.conf`}>
-                  <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Download .conf</Button>
+                  <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Standard .conf</Button>
+                </a>
+                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.conf`}>
+                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik</Button>
                 </a>
                 <Button size="sm" variant="outline" onClick={() => window.open(peersApi.qrcodeUrl(createdPeer.id))}>
                   <QrCode className="h-4 w-4" /> View QR
@@ -639,7 +654,10 @@ function BranchOfficeWizard({ onDone, onCancel }: { onDone: () => void; onCancel
               </div>
               <div className="flex gap-2">
                 <a href={peersApi.configUrl(createdPeer.id)} download={`${createdPeer.name}.conf`}>
-                  <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Download .conf</Button>
+                  <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Standard .conf</Button>
+                </a>
+                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.conf`}>
+                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik</Button>
                 </a>
                 <Button size="sm" onClick={onDone}>Done</Button>
               </div>

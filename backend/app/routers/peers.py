@@ -16,7 +16,7 @@ from app.schemas.peer import (
 from app.schemas.group import AddMembersRequest
 from app.services import peer_service
 from app.services.audit_service import log as audit_log
-from app.services.config_service import generate_client_config
+from app.services.config_service import generate_client_config, generate_mikrotik_config
 from app.services.policy_compiler import compile_allowed_cidrs, compile_client_allowed_ips, compile_override_summary
 from app.utils.qr import generate_qr_png
 
@@ -176,6 +176,27 @@ def download_config(
     allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     config_str = generate_client_config(peer, server_cfg, allowed_cidrs)
     filename = f"{peer.name.lower().replace(' ', '-')}.conf"
+    return Response(
+        content=config_str,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{peer_id}/config/mikrotik")
+def download_mikrotik_config(
+    peer_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Download MikroTik RouterOS compatible WireGuard config."""
+    peer = peer_service.get_peer(db, peer_id)
+    if not peer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+    server_cfg = _get_server_config(db)
+    allowed_cidrs = compile_client_allowed_ips(db, peer_id)
+    config_str = generate_mikrotik_config(peer, server_cfg, allowed_cidrs)
+    filename = f"{peer.name.lower().replace(' ', '-')}-mikrotik.conf"
     return Response(
         content=config_str,
         media_type="text/plain",
