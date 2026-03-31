@@ -26,7 +26,8 @@ def generate_client_config(
         if allowed_cidrs:
             client_allowed_ips = format_allowed_ips(allowed_cidrs)
         else:
-            client_allowed_ips = "# No zones assigned — no traffic will be routed"
+            # Use 0.0.0.0/32 as placeholder - routes no traffic but keeps config valid
+            client_allowed_ips = "0.0.0.0/32"
 
     lines = [
         "[Interface]",
