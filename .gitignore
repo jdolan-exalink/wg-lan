@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+*.env.local
+
+# Database
+*.db
+*.sqlite3
+
+# WireGuard configs (generated)
+config/
+
+# Data volume
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
