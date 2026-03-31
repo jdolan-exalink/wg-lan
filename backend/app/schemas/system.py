@@ -1,0 +1,35 @@
+from pydantic import BaseModel
+
+
+class ServerConfigResponse(BaseModel):
+    id: int
+    interface_name: str
+    public_key: str
+    listen_port: int
+    address: str
+    dns: str | None
+    mtu: int | None
+    post_up: str | None
+    post_down: str | None
+    endpoint: str
+
+    model_config = {"from_attributes": True}
+
+
+class ServerConfigUpdate(BaseModel):
+    dns: str | None = None
+    mtu: int | None = None
+    post_up: str | None = None
+    post_down: str | None = None
+    endpoint: str | None = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    db: str
+    wg_interface: str
+
+
+class BackupResponse(BaseModel):
+    message: str
+    path: str
