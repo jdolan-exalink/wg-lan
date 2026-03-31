@@ -458,6 +458,8 @@ function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel:
             {step === 2 && (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">Assign to groups to inherit access policies</p>
+                {/* Hidden input to register group_ids with react-hook-form */}
+                <input type="hidden" {...register("group_ids")} />
                 <div className="space-y-2">
                   {groups.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No groups yet — peer will have no zone access</p>
@@ -610,6 +612,8 @@ function BranchOfficeWizard({ onDone, onCancel }: { onDone: () => void; onCancel
             {step === 2 && (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">Assign to groups to define which central zones this branch can reach</p>
+                {/* Hidden input to register group_ids with react-hook-form */}
+                <input type="hidden" {...register("group_ids")} />
                 <div className="space-y-2">
                   {groups.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No groups yet</p>
