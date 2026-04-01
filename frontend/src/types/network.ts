@@ -31,8 +31,13 @@ export interface Policy {
   dest_group_name: string | null;
   direction: "outbound" | "inbound" | "both";
   action: "allow" | "deny";
+  enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface FirewallStatus {
+  firewall_enabled: boolean;
 }
 
 export interface PolicyMatrixCell {

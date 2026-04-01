@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.peer import Peer
 
 
 class PeerGroup(Base):
@@ -36,6 +42,7 @@ class PeerGroupMember(Base):
     group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
 
     group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="members")
+    peer: Mapped["Peer"] = relationship("Peer", back_populates="group_memberships")
 
 
 class Policy(Base):
@@ -49,6 +56,7 @@ class Policy(Base):
     dest_group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
     direction: Mapped[str] = mapped_column(String, nullable=False, default="both")  # 'outbound', 'inbound', 'both'
     action: Mapped[str] = mapped_column(String, nullable=False, default="allow")  # 'allow' or 'deny'
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)  # When False, rule is inactive
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 

@@ -5,7 +5,7 @@ import { peersApi } from "@/api/peers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -15,14 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Plus, Trash2, Users, ChevronDown, ChevronRight, Info, ArrowRight, Router, Laptop, Smartphone, Server, X } from "lucide-react";
+import { Plus, Trash2, Users, ChevronDown, ChevronRight, Info, ArrowRight, Router, Laptop, Smartphone, Server, X, Check, Loader2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -48,7 +41,8 @@ export function GroupsPage() {
   const [showForm, setShowForm] = useState(false);
   const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null);
   const [addPeersGroupId, setAddPeersGroupId] = useState<number | null>(null);
-  const [selectedPeerId, setSelectedPeerId] = useState<number | null>(null);
+  const [selectedPeerIds, setSelectedPeerIds] = useState<Set<number>>(new Set());
+  const [deleteGroupId, setDeleteGroupId] = useState<number | null>(null);
 
   const { data: groups = [] } = useQuery({
     queryKey: ["groups"],
@@ -60,7 +54,7 @@ export function GroupsPage() {
     queryFn: () => peersApi.list().then((r) => r.data),
   });
 
-  const { data: existingMembers = [] } = useQuery({
+  const { data: existingMembers = [], isFetching: membersFetching } = useQuery({
     queryKey: ["group-members", expandedGroupId],
     queryFn: () => expandedGroupId ? groupsApi.getMembers(expandedGroupId).then((r) => r.data) : [],
     enabled: expandedGroupId !== null,
@@ -83,7 +77,7 @@ export function GroupsPage() {
       qc.invalidateQueries({ queryKey: ["groups"] });
       qc.invalidateQueries({ queryKey: ["group-members"] });
       setAddPeersGroupId(null);
-      setSelectedPeerId(null);
+      setSelectedPeerIds(new Set());
     },
   });
 
@@ -102,6 +96,15 @@ export function GroupsPage() {
 
   const existingMemberIds = new Set(existingMembers.map((m) => m.peer_id));
   const availablePeers = peers.filter((p) => !p.is_system && !existingMemberIds.has(p.id));
+
+  const togglePeer = (peerId: number) => {
+    setSelectedPeerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(peerId)) next.delete(peerId);
+      else next.add(peerId);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -194,9 +197,10 @@ export function GroupsPage() {
                   expanded={expandedGroupId === g.id}
                   onToggle={() => setExpandedGroupId(expandedGroupId === g.id ? null : g.id)}
                   members={expandedGroupId === g.id ? existingMembers : []}
-                  onAddPeers={() => { setAddPeersGroupId(g.id); setSelectedPeerId(null); }}
+                  membersLoading={expandedGroupId === g.id && membersFetching}
+                  onAddPeers={() => { setAddPeersGroupId(g.id); setSelectedPeerIds(new Set()); }}
                   onRemovePeer={(peerId) => removeMember.mutate({ groupId: g.id, peerId })}
-                  onDelete={() => del.mutate(g.id)}
+                  onDelete={() => setDeleteGroupId(g.id)}
                 />
               ))}
             </tbody>
@@ -205,51 +209,81 @@ export function GroupsPage() {
       </Card>
 
       {/* Add Peers Dialog */}
-      <Dialog open={addPeersGroupId !== null} onOpenChange={(open) => !open && setAddPeersGroupId(null)}>
+      <Dialog open={addPeersGroupId !== null} onOpenChange={(open) => { if (!open) { setAddPeersGroupId(null); setSelectedPeerIds(new Set()); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Agregar peer al grupo</DialogTitle>
-            <DialogDescription>Seleccioná el peer que querés agregar.</DialogDescription>
+            <DialogTitle>Agregar peers al grupo</DialogTitle>
+            <DialogDescription>Seleccioná uno o más peers para agregar.</DialogDescription>
           </DialogHeader>
-          <div className="py-4 space-y-2">
+          <div className="py-2 space-y-1 max-h-72 overflow-y-auto">
             {availablePeers.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No hay peers disponibles para agregar.</p>
+              <p className="text-sm text-muted-foreground py-2">No hay peers disponibles para agregar.</p>
             ) : (
-              <Select
-                value={selectedPeerId?.toString() ?? ""}
-                onValueChange={(v) => setSelectedPeerId(parseInt(v))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Elegir peer..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {availablePeers.map((p) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>
-                      <div className="flex items-center gap-2">
-                        {peerTypeIcons[p.device_type ?? p.peer_type]}
-                        <span>{p.name}</span>
-                        <Badge variant="outline" className="text-[10px]">{p.peer_type}</Badge>
-                        <span className="text-xs font-mono text-muted-foreground">{p.assigned_ip}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              availablePeers.map((p) => {
+                const selected = selectedPeerIds.has(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => togglePeer(p.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-left transition-colors ${
+                      selected ? "bg-primary/10 border border-primary/30" : "hover:bg-muted/50 border border-transparent"
+                    }`}
+                  >
+                    <div className={`h-4 w-4 rounded border flex items-center justify-center flex-shrink-0 ${selected ? "bg-primary border-primary" : "border-muted-foreground/40"}`}>
+                      {selected && <Check className="h-3 w-3 text-primary-foreground" />}
+                    </div>
+                    <span className="text-muted-foreground">{peerTypeIcons[p.device_type ?? p.peer_type]}</span>
+                    <span className="font-medium flex-1">{p.name}</span>
+                    <Badge variant="outline" className="text-[10px]">{p.peer_type}</Badge>
+                    <span className="text-xs font-mono text-muted-foreground">{p.assigned_ip}</span>
+                  </button>
+                );
+              })
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setAddPeersGroupId(null); setSelectedPeerId(null); }}>
-              Cancel
+            <Button variant="outline" onClick={() => { setAddPeersGroupId(null); setSelectedPeerIds(new Set()); }}>
+              Cancelar
             </Button>
             <Button
               onClick={() => {
-                if (addPeersGroupId && selectedPeerId) {
-                  addMember.mutate({ groupId: addPeersGroupId, peerIds: [selectedPeerId] });
+                if (addPeersGroupId && selectedPeerIds.size > 0) {
+                  addMember.mutate({ groupId: addPeersGroupId, peerIds: Array.from(selectedPeerIds) });
                 }
               }}
-              disabled={!selectedPeerId || addMember.isPending}
+              disabled={selectedPeerIds.size === 0 || addMember.isPending}
             >
-              {addMember.isPending ? "Agregando..." : "Agregar"}
+              {addMember.isPending ? "Agregando..." : `Agregar${selectedPeerIds.size > 0 ? ` (${selectedPeerIds.size})` : ""}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteGroupId !== null} onOpenChange={(open) => !open && setDeleteGroupId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar grupo</DialogTitle>
+            <DialogDescription>
+              ¿Estás seguro que querés eliminar este grupo? Se eliminarán también todas sus políticas de acceso. Esta acción no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteGroupId(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deleteGroupId) {
+                  del.mutate(deleteGroupId);
+                  setDeleteGroupId(null);
+                }
+              }}
+              disabled={del.isPending}
+            >
+              {del.isPending ? "Eliminando..." : "Eliminar grupo"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -263,6 +297,7 @@ function GroupRow({
   expanded,
   onToggle,
   members,
+  membersLoading,
   onAddPeers,
   onRemovePeer,
   onDelete,
@@ -271,6 +306,7 @@ function GroupRow({
   expanded: boolean;
   onToggle: () => void;
   members: Array<{ peer_id: number; peer_name: string; peer_type: string; assigned_ip: string }>;
+  membersLoading: boolean;
   onAddPeers: () => void;
   onRemovePeer: (peerId: number) => void;
   onDelete: () => void;
@@ -301,13 +337,18 @@ function GroupRow({
           <td colSpan={5} className="px-4 py-3">
             <div className="ml-6 space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground font-medium">Miembros del grupo:</p>
+                <p className="text-xs font-semibold text-foreground">Miembros del grupo</p>
                 <Button size="sm" variant="outline" onClick={onAddPeers}>
                   <Plus className="h-3.5 w-3.5 mr-1" /> Agregar peer
                 </Button>
               </div>
-              {members.length === 0 ? (
-                <p className="text-xs text-muted-foreground/50">Sin miembros — agregá peers para definir políticas de acceso</p>
+              {membersLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Cargando miembros...</span>
+                </div>
+              ) : members.length === 0 ? (
+                <p className="text-xs text-muted-foreground/60 italic">Sin miembros — agregá peers para definir políticas de acceso</p>
               ) : (
                 <div className="space-y-1">
                   {members.map((m) => (

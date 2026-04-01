@@ -10,7 +10,7 @@ from app.database import get_db
 from app.dependencies import require_password_changed
 from app.models.server_config import ServerConfig
 from app.models.user import User
-from app.schemas.system import BackupResponse, HealthResponse, RegenerateKeyResponse, ServerConfigResponse, ServerConfigUpdate
+from app.schemas.system import BackupResponse, FirewallStatusResponse, FirewallStatusUpdate, HealthResponse, RegenerateKeyResponse, ServerConfigResponse, ServerConfigUpdate
 from app.services import wg_service
 from app.utils.wg_keygen import safe_generate_keypair
 
@@ -204,3 +204,35 @@ def wg_restart(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to restart WireGuard: {str(e)}",
         )
+
+
+@router.get("/firewall", response_model=FirewallStatusResponse)
+def get_firewall_status(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Get the firewall enabled/disabled state. When disabled, all traffic is allowed."""
+    cfg = db.query(ServerConfig).first()
+    if not cfg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not initialised")
+    return FirewallStatusResponse(firewall_enabled=cfg.firewall_enabled)
+
+
+@router.patch("/firewall", response_model=FirewallStatusResponse)
+def set_firewall_status(
+    body: FirewallStatusUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Enable or disable the firewall. When disabled, all peers can reach all networks."""
+    cfg = db.query(ServerConfig).first()
+    if not cfg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not initialised")
+    cfg.firewall_enabled = body.firewall_enabled
+    db.commit()
+    db.refresh(cfg)
+    try:
+        wg_service.apply_config(db)
+    except Exception:
+        pass
+    return FirewallStatusResponse(firewall_enabled=cfg.firewall_enabled)

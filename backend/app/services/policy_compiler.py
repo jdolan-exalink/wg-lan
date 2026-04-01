@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.models.group import PeerGroupMember, Policy
 from app.models.peer import Peer, PeerNetworkAccess, PeerOverride
 from app.models.network import Network
+from app.models.server_config import ServerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,19 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
     """
     Return the list of CIDRs this peer is allowed to reach,
     based on group-to-group policies and peer-level overrides.
-    
-    If the peer has NO groups, returns ALL network CIDRs (allow-all default).
-    If the peer HAS groups, applies policies with deny-first precedence.
+
+    When firewall is DISABLED (default), returns ALL networks for everyone.
+    When firewall is ENABLED, applies group policies (deny-first precedence).
+    Only policies with enabled=True are evaluated.
     """
+    # Step 0: Check global firewall switch — when OFF, allow everything
+    config = db.query(ServerConfig).first()
+    if config is not None and not config.firewall_enabled:
+        all_networks = db.query(Network).all()
+        cidrs = sorted({n.subnet for n in all_networks})
+        logger.info(f"Peer {peer_id}: firewall disabled — ALLOW-ALL, CIDRs: {cidrs}")
+        return cidrs
+
     # Step 1: Collect the peer's group IDs
     memberships = db.query(PeerGroupMember).filter(
         PeerGroupMember.peer_id == peer_id
@@ -84,12 +94,14 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
         outbound_policies = db.query(Policy).filter(
             Policy.source_group_id.in_(group_ids),
             Policy.direction.in_(["outbound", "both"]),
+            Policy.enabled == True,
         ).all()
-        
+
         # Inbound policies: dest group can reach peer's group's networks
         inbound_policies = db.query(Policy).filter(
             Policy.dest_group_id.in_(group_ids),
             Policy.direction.in_(["inbound", "both"]),
+            Policy.enabled == True,
         ).all()
         
         for p in outbound_policies:

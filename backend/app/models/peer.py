@@ -34,7 +34,7 @@ class Peer(Base):
     networks_owned: Mapped[list["Network"]] = relationship("Network", back_populates="peer", foreign_keys="Network.peer_id")
     network_access: Mapped[list["PeerNetworkAccess"]] = relationship("PeerNetworkAccess", cascade="all, delete-orphan", back_populates="peer")
     group_memberships: Mapped[list["PeerGroupMember"]] = relationship(
-        "PeerGroupMember", cascade="all, delete-orphan"
+        "PeerGroupMember", cascade="all, delete-orphan", back_populates="peer"
     )
 
 
