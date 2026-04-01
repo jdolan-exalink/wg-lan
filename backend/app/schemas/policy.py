@@ -9,11 +9,13 @@ class PolicyCreate(BaseModel):
     dest_group_id: int
     direction: Literal["outbound", "inbound", "both"] = "both"
     action: Literal["allow", "deny"] = "allow"
+    enabled: bool = True
 
 
 class PolicyUpdate(BaseModel):
     direction: Literal["outbound", "inbound", "both"] | None = None
     action: Literal["allow", "deny"] | None = None
+    enabled: bool | None = None
 
 
 class PolicyResponse(BaseModel):
@@ -24,6 +26,7 @@ class PolicyResponse(BaseModel):
     dest_group_name: str | None = None
     direction: str
     action: str
+    enabled: bool
     created_at: datetime
     updated_at: datetime
 

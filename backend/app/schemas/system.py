@@ -40,3 +40,11 @@ class HealthResponse(BaseModel):
 class BackupResponse(BaseModel):
     message: str
     path: str
+
+
+class FirewallStatusResponse(BaseModel):
+    firewall_enabled: bool
+
+
+class FirewallStatusUpdate(BaseModel):
+    firewall_enabled: bool
