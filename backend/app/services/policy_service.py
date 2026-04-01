@@ -1,37 +1,52 @@
 from sqlalchemy.orm import Session
 
 from app.models.group import PeerGroup, Policy
-from app.models.zone import Zone
-from app.schemas.policy import PolicyMatrixResponse, PolicyMatrixRow, PolicyMatrixCell, PolicyUpsert
+from app.schemas.policy import PolicyCreate, PolicyUpdate, PolicyMatrixResponse, PolicyMatrixRow, PolicyMatrixCell
 
 
 def list_policies(
     db: Session,
-    group_id: int | None = None,
-    zone_id: int | None = None,
+    source_group_id: int | None = None,
+    dest_group_id: int | None = None,
 ) -> list[Policy]:
     query = db.query(Policy)
-    if group_id:
-        query = query.filter(Policy.group_id == group_id)
-    if zone_id:
-        query = query.filter(Policy.zone_id == zone_id)
+    if source_group_id:
+        query = query.filter(Policy.source_group_id == source_group_id)
+    if dest_group_id:
+        query = query.filter(Policy.dest_group_id == dest_group_id)
     return query.all()
 
 
-def upsert_policy(db: Session, data: PolicyUpsert) -> Policy:
+def create_policy(db: Session, data: PolicyCreate) -> Policy:
+    # Check for existing policy with same source/dest/direction
     existing = db.query(Policy).filter(
-        Policy.group_id == data.group_id,
-        Policy.zone_id == data.zone_id,
+        Policy.source_group_id == data.source_group_id,
+        Policy.dest_group_id == data.dest_group_id,
+        Policy.direction == data.direction,
     ).first()
-
+    
     if existing:
         existing.action = data.action
         db.commit()
         db.refresh(existing)
         return existing
-
-    policy = Policy(group_id=data.group_id, zone_id=data.zone_id, action=data.action)
+    
+    policy = Policy(
+        source_group_id=data.source_group_id,
+        dest_group_id=data.dest_group_id,
+        direction=data.direction,
+        action=data.action,
+    )
     db.add(policy)
+    db.commit()
+    db.refresh(policy)
+    return policy
+
+
+def update_policy(db: Session, policy: Policy, data: PolicyUpdate) -> Policy:
+    updates = data.model_dump(exclude_none=True)
+    for key, value in updates.items():
+        setattr(policy, key, value)
     db.commit()
     db.refresh(policy)
     return policy
@@ -47,31 +62,44 @@ def delete_policy(db: Session, policy_id: int) -> bool:
 
 
 def get_policy_matrix(db: Session) -> PolicyMatrixResponse:
-    groups = db.query(PeerGroup).order_by(PeerGroup.name).all()
-    zones = db.query(Zone).order_by(Zone.name).all()
+    source_groups = db.query(PeerGroup).order_by(PeerGroup.name).all()
+    dest_groups = db.query(PeerGroup).order_by(PeerGroup.name).all()
     policies = db.query(Policy).all()
 
-    # Build lookup: (group_id, zone_id) -> policy
-    policy_map: dict[tuple[int, int], Policy] = {
-        (p.group_id, p.zone_id): p for p in policies
+    # Build lookup: (source_group_id, dest_group_id, direction) -> policy
+    policy_map: dict[tuple[int, int, str], Policy] = {
+        (p.source_group_id, p.dest_group_id, p.direction): p for p in policies
     }
 
-    zone_ids = [z.id for z in zones]
-    zone_names = {z.id: z.name for z in zones}
+    dest_group_ids = [g.id for g in dest_groups]
+    dest_group_names = {g.id: g.name for g in dest_groups}
 
     rows: list[PolicyMatrixRow] = []
-    for group in groups:
-        cells: dict[int, PolicyMatrixCell] = {}
-        for zone in zones:
-            pol = policy_map.get((group.id, zone.id))
-            cells[zone.id] = PolicyMatrixCell(
+    for source_group in source_groups:
+        dest_cells: dict[int, PolicyMatrixCell] = {}
+        for dest_group in dest_groups:
+            # Check for policies in both directions
+            outbound_pol = policy_map.get((source_group.id, dest_group.id, "outbound"))
+            inbound_pol = policy_map.get((source_group.id, dest_group.id, "inbound"))
+            both_pol = policy_map.get((source_group.id, dest_group.id, "both"))
+            
+            # Prefer 'both' if exists, otherwise use outbound
+            pol = both_pol or outbound_pol
+            
+            dest_cells[dest_group.id] = PolicyMatrixCell(
                 action=pol.action if pol else None,
                 policy_id=pol.id if pol else None,
+                direction=pol.direction if pol else None,
             )
+        
         rows.append(PolicyMatrixRow(
-            group_id=group.id,
-            group_name=group.name,
-            zones=cells,
+            source_group_id=source_group.id,
+            source_group_name=source_group.name,
+            dest_groups=dest_cells,
         ))
 
-    return PolicyMatrixResponse(groups=rows, zone_ids=zone_ids, zone_names=zone_names)
+    return PolicyMatrixResponse(
+        source_groups=rows,
+        dest_group_ids=dest_group_ids,
+        dest_group_names=dest_group_names,
+    )

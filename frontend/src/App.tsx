@@ -9,7 +9,6 @@ import { OnboardingWizard } from "@/components/auth/OnboardingWizard";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { PeersPage } from "@/pages/PeersPage";
 import { NetworksPage } from "@/pages/NetworksPage";
-import { ZonesPage } from "@/pages/ZonesPage";
 import { GroupsPage } from "@/pages/GroupsPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
 import { SystemPage } from "@/pages/SystemPage";
@@ -50,7 +49,6 @@ export default function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/peers" element={<PeersPage />} />
               <Route path="/networks" element={<NetworksPage />} />
-              <Route path="/zones" element={<ZonesPage />} />
               <Route path="/groups" element={<GroupsPage />} />
               <Route path="/policies" element={<PoliciesPage />} />
               <Route path="/system" element={<SystemPage />} />

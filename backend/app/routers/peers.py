@@ -16,7 +16,7 @@ from app.schemas.peer import (
 from app.schemas.group import AddMembersRequest
 from app.services import peer_service
 from app.services.audit_service import log as audit_log
-from app.services.config_service import generate_client_config, generate_mikrotik_config
+from app.services.config_service import generate_client_config, generate_mikrotik_config, generate_mikrotik_manual_commands
 from app.services.policy_compiler import compile_allowed_cidrs, compile_client_allowed_ips, compile_override_summary
 from app.utils.qr import generate_qr_png
 
@@ -41,7 +41,7 @@ def list_peers(
     _: User = Depends(require_password_changed),
 ):
     peers = peer_service.list_peers(db, peer_type=peer_type)
-    return [PeerResponse.from_orm_peer(p) for p in peers]
+    return [PeerResponse.from_orm_peer(p, db=db) for p in peers]
 
 
 @router.get("/{peer_id}", response_model=PeerResponse)
@@ -53,7 +53,7 @@ def get_peer(
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
-    return PeerResponse.from_orm_peer(peer)
+    return PeerResponse.from_orm_peer(peer, db=db)
 
 
 @router.post("/roadwarrior", response_model=PeerResponse, status_code=status.HTTP_201_CREATED)
@@ -67,7 +67,7 @@ def create_roadwarrior(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     audit_log(db, "peer.create", user_id=current_user.id, target_type="peer", target_id=peer.id, details={"name": peer.name, "type": "roadwarrior"})
-    return PeerResponse.from_orm_peer(peer)
+    return PeerResponse.from_orm_peer(peer, db=db)
 
 
 @router.post("/branch-office", response_model=PeerResponse, status_code=status.HTTP_201_CREATED)
@@ -81,7 +81,7 @@ def create_branch_office(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     audit_log(db, "peer.create", user_id=current_user.id, target_type="peer", target_id=peer.id, details={"name": peer.name, "type": "branch_office"})
-    return PeerResponse.from_orm_peer(peer)
+    return PeerResponse.from_orm_peer(peer, db=db)
 
 
 @router.patch("/{peer_id}", response_model=PeerResponse)
@@ -95,7 +95,7 @@ def update_peer(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     peer = peer_service.update_peer(db, peer, body)
-    return PeerResponse.from_orm_peer(peer)
+    return PeerResponse.from_orm_peer(peer, db=db)
 
 
 @router.post("/{peer_id}/groups", response_model=PeerResponse)
@@ -111,16 +111,19 @@ def update_peer_groups(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
 
-    # Remove existing memberships
     db.query(PeerGroupMember).filter(PeerGroupMember.peer_id == peer_id).delete()
 
-    # Add new ones
     for gid in body.peer_ids:
         db.add(PeerGroupMember(peer_id=peer_id, group_id=gid))
 
     db.commit()
     db.refresh(peer)
-    return PeerResponse.from_orm_peer(peer)
+    return PeerResponse.from_orm_peer(peer, db=db)
+
+
+def _protect_system_peer(peer):
+    if getattr(peer, 'is_system', False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot modify the system peer")
 
 
 @router.delete("/{peer_id}")
@@ -132,6 +135,7 @@ def revoke_peer(
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+    _protect_system_peer(peer)
     peer_service.revoke_peer(db, peer)
     audit_log(db, "peer.revoke", user_id=current_user.id, target_type="peer", target_id=peer_id, details={"name": peer.name})
     return {"message": f"Peer '{peer.name}' deleted successfully"}
@@ -146,8 +150,9 @@ def toggle_peer(
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+    _protect_system_peer(peer)
     peer = peer_service.toggle_peer(db, peer)
-    return PeerResponse.from_orm_peer(peer)
+    return PeerResponse.from_orm_peer(peer, db=db)
 
 
 @router.post("/{peer_id}/regenerate-keys", response_model=PeerResponse)
@@ -159,8 +164,9 @@ def regenerate_keys(
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+    _protect_system_peer(peer)
     peer = peer_service.regenerate_keys(db, peer)
-    return PeerResponse.from_orm_peer(peer)
+    return PeerResponse.from_orm_peer(peer, db=db)
 
 
 @router.get("/{peer_id}/config")
@@ -172,6 +178,7 @@ def download_config(
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+    _protect_system_peer(peer)
     server_cfg = _get_server_config(db)
     allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     config_str = generate_client_config(peer, server_cfg, allowed_cidrs)
@@ -189,14 +196,17 @@ def download_mikrotik_config(
     db: Session = Depends(get_db),
     _: User = Depends(require_password_changed),
 ):
-    """Download MikroTik RouterOS compatible WireGuard config."""
+    """Download MikroTik RouterOS CLI commands for WinBox terminal."""
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+    _protect_system_peer(peer)
     server_cfg = _get_server_config(db)
     allowed_cidrs = compile_client_allowed_ips(db, peer_id)
-    config_str = generate_mikrotik_config(peer, server_cfg, allowed_cidrs)
-    filename = f"{peer.name.lower().replace(' ', '-')}-mikrotik.conf"
+    
+    config_str = generate_mikrotik_manual_commands(peer, server_cfg, allowed_cidrs)
+    
+    filename = f"{peer.name.lower().replace(' ', '-')}-mikrotik.txt"
     return Response(
         content=config_str,
         media_type="text/plain",
@@ -213,6 +223,7 @@ def get_qrcode(
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+    _protect_system_peer(peer)
     server_cfg = _get_server_config(db)
     allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     config_str = generate_client_config(peer, server_cfg, allowed_cidrs)
@@ -245,13 +256,13 @@ def upsert_override(
     return peer_service.upsert_override(db, peer, body)
 
 
-@router.delete("/{peer_id}/overrides/{zone_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{peer_id}/overrides/{network_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_override(
     peer_id: int,
-    zone_id: int,
+    network_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(require_password_changed),
 ):
-    deleted = peer_service.delete_override(db, peer_id, zone_id)
+    deleted = peer_service.delete_override(db, peer_id, network_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")

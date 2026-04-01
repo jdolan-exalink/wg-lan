@@ -22,12 +22,14 @@ class Peer(Base):
     dns: Mapped[str | None] = mapped_column(String, nullable=True)
     persistent_keepalive: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # System peer (VPN server) - cannot be deleted
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
 
-    network: Mapped["Network"] = relationship("Network")
+    network: Mapped["Network"] = relationship("Network", foreign_keys=[network_id])
+    networks_owned: Mapped[list["Network"]] = relationship("Network", back_populates="peer", foreign_keys="Network.peer_id")
     group_memberships: Mapped[list["PeerGroupMember"]] = relationship(
         "PeerGroupMember", cascade="all, delete-orphan"
     )
@@ -36,14 +38,14 @@ class Peer(Base):
 class PeerOverride(Base):
     __tablename__ = "peer_overrides"
     __table_args__ = (
-        UniqueConstraint("peer_id", "zone_id", name="uq_peer_zone_override"),
+        UniqueConstraint("peer_id", "network_id", name="uq_peer_network_override"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     peer_id: Mapped[int] = mapped_column(Integer, ForeignKey("peers.id", ondelete="CASCADE"), nullable=False)
-    zone_id: Mapped[int] = mapped_column(Integer, ForeignKey("zones.id", ondelete="CASCADE"), nullable=False)
+    network_id: Mapped[int] = mapped_column(Integer, ForeignKey("networks.id", ondelete="CASCADE"), nullable=False)
     action: Mapped[str] = mapped_column(String, nullable=False)  # 'allow' or 'deny'
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
     peer: Mapped["Peer"] = relationship("Peer")
-    zone: Mapped["Zone"] = relationship("Zone")
+    network: Mapped["Network"] = relationship("Network")

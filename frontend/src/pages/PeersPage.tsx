@@ -78,9 +78,9 @@ function QrCodeCard({ peer, onClose }: { peer: Peer; onClose: () => void }) {
               <Download className="h-4 w-4 mr-2" /> Standard (.conf)
             </Button>
           </a>
-          <a href={peersApi.mikrotikConfigUrl(peer.id)} download={`${peer.name}-mikrotik.conf`}>
+          <a href={peersApi.mikrotikConfigUrl(peer.id)} download={`${peer.name}-mikrotik.txt`}>
             <Button variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-2" /> MikroTik
+              <Download className="h-4 w-4 mr-2" /> MikroTik (.txt)
             </Button>
           </a>
         </div>
@@ -247,11 +247,15 @@ export function PeersPage() {
                     <Badge variant={p.tunnel_mode === "full" ? "default" : "outline"}>{p.tunnel_mode}</Badge>
                   </td>
                   <td className="px-4 py-2">
-                    <Switch
-                      checked={p.is_enabled}
-                      onCheckedChange={() => toggle.mutate(p.id)}
-                      disabled={toggle.isPending}
-                    />
+                    {p.is_system ? (
+                      <Badge variant="secondary" className="text-[10px]">Always On</Badge>
+                    ) : (
+                      <Switch
+                        checked={p.is_enabled}
+                        onCheckedChange={() => toggle.mutate(p.id)}
+                        disabled={toggle.isPending}
+                      />
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center justify-end gap-1">
@@ -261,30 +265,34 @@ export function PeersPage() {
                         title="Edit groups"
                         onClick={() => {
                           setEditGroupsPeer(p);
-                          setSelectedGroupIds([]);
+                          setSelectedGroupIds(p.group_ids || []);
                         }}
                       >
                         <Shield className="h-4 w-4" />
                       </Button>
-                      <a href={peersApi.configUrl(p.id)} download={`${p.name}.conf`}>
-                        <Button variant="ghost" size="icon" title="Download standard config">
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </a>
-                      <a href={peersApi.mikrotikConfigUrl(p.id)} download={`${p.name}-mikrotik.conf`}>
-                        <Button variant="ghost" size="icon" title="Download MikroTik config">
-                          <Router className="h-4 w-4" />
-                        </Button>
-                      </a>
-                      <Button variant="ghost" size="icon" title="Show QR" onClick={() => setQrPeer(p)}>
-                        <QrCode className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" title="Regenerate keys" onClick={() => regenKeys.mutate(p.id)}>
-                        <RotateCcw className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" title="Delete peer" onClick={() => setRevokePeer(p)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {!p.is_system && (
+                        <>
+                          <a href={peersApi.configUrl(p.id)} download={`${p.name}.conf`}>
+                            <Button variant="ghost" size="icon" title="Download standard config">
+                              <Download className="h-4 w-4" />
+                            </Button>
+                          </a>
+                          <a href={peersApi.mikrotikConfigUrl(p.id)} download={`${p.name}-mikrotik.txt`}>
+                            <Button variant="ghost" size="icon" title="Download MikroTik RouterOS commands">
+                              <Router className="h-4 w-4" />
+                            </Button>
+                          </a>
+                          <Button variant="ghost" size="icon" title="Show QR" onClick={() => setQrPeer(p)}>
+                            <QrCode className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" title="Regenerate keys" onClick={() => regenKeys.mutate(p.id)}>
+                            <RotateCcw className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" title="Delete peer" onClick={() => setRevokePeer(p)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -509,8 +517,8 @@ function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel:
                 <a href={peersApi.configUrl(createdPeer.id)} download={`${createdPeer.name}.conf`}>
                   <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Standard .conf</Button>
                 </a>
-                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.conf`}>
-                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik</Button>
+                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.txt`}>
+                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik (.txt)</Button>
                 </a>
                 <Button size="sm" variant="outline" onClick={() => window.open(peersApi.qrcodeUrl(createdPeer.id))}>
                   <QrCode className="h-4 w-4" /> View QR
@@ -660,8 +668,8 @@ function BranchOfficeWizard({ onDone, onCancel }: { onDone: () => void; onCancel
                 <a href={peersApi.configUrl(createdPeer.id)} download={`${createdPeer.name}.conf`}>
                   <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Standard .conf</Button>
                 </a>
-                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.conf`}>
-                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik</Button>
+                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.txt`}>
+                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik (.txt)</Button>
                 </a>
                 <Button size="sm" onClick={onDone}>Done</Button>
               </div>

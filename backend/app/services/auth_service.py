@@ -92,3 +92,34 @@ def create_admin_user(db: Session) -> None:
     )
     db.add(user)
     db.commit()
+
+
+def create_vpn_server_peer(db: Session) -> None:
+    """Create a system peer representing the VPN server itself.
+    This peer cannot be deleted and is used for permission management."""
+    from app.models.peer import Peer
+    
+    existing = db.query(Peer).filter(Peer.name == "VPN Server", Peer.is_system == True).first()
+    if existing:
+        return
+    
+    # Generate a dummy keypair (not used for actual WireGuard connections)
+    private_key, public_key = safe_generate_keypair()
+    
+    # Assign the server's own IP from the subnet
+    server_ip = get_server_ip(settings.subnet)
+    
+    peer = Peer(
+        name="VPN Server",
+        peer_type="server",
+        device_type="server",
+        private_key=private_key,
+        public_key=public_key,
+        assigned_ip=server_ip,
+        tunnel_mode="split",
+        persistent_keepalive=0,
+        is_enabled=True,
+        is_system=True,  # Mark as system peer - cannot be deleted
+    )
+    db.add(peer)
+    db.commit()

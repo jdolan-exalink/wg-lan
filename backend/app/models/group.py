@@ -14,8 +14,13 @@ class PeerGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
-    policies: Mapped[list["Policy"]] = relationship(
-        "Policy", back_populates="group", cascade="all, delete-orphan"
+    source_policies: Mapped[list["Policy"]] = relationship(
+        "Policy", back_populates="source_group", cascade="all, delete-orphan",
+        foreign_keys="Policy.source_group_id"
+    )
+    dest_policies: Mapped[list["Policy"]] = relationship(
+        "Policy", back_populates="dest_group", cascade="all, delete-orphan",
+        foreign_keys="Policy.dest_group_id"
     )
     members: Mapped[list["PeerGroupMember"]] = relationship(
         "PeerGroupMember", back_populates="group", cascade="all, delete-orphan"
@@ -35,12 +40,17 @@ class PeerGroupMember(Base):
 
 class Policy(Base):
     __tablename__ = "policies"
-    __table_args__ = (UniqueConstraint("group_id", "zone_id", name="uq_group_zone"),)
+    __table_args__ = (
+        UniqueConstraint("source_group_id", "dest_group_id", "direction", name="uq_policy_source_dest_direction"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
-    zone_id: Mapped[int] = mapped_column(Integer, ForeignKey("zones.id", ondelete="CASCADE"), nullable=False)
-    action: Mapped[str] = mapped_column(String, nullable=False)  # 'allow' or 'deny'
+    source_group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
+    dest_group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
+    direction: Mapped[str] = mapped_column(String, nullable=False, default="both")  # 'outbound', 'inbound', 'both'
+    action: Mapped[str] = mapped_column(String, nullable=False, default="allow")  # 'allow' or 'deny'
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
-    group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="policies")
-    zone: Mapped["Zone"] = relationship("Zone")
+    source_group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="source_policies", foreign_keys=[source_group_id])
+    dest_group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="dest_policies", foreign_keys=[dest_group_id])

@@ -10,6 +10,7 @@ from app.schemas.network import (
     NetworkUpdate,
     SubnetConflictCheck,
     SubnetConflictResponse,
+    NetworkPeersUpdate,
 )
 from app.services import network_service
 
@@ -74,6 +75,34 @@ def delete_network(
     if not network:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
     network_service.delete_network(db, network)
+
+
+@router.post("/{network_id}/peers", response_model=NetworkResponse)
+def assign_peers(
+    network_id: int,
+    body: NetworkPeersUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Assign peers to a network. Replaces existing assignments."""
+    network = network_service.get_network(db, network_id)
+    if not network:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
+    return network_service.assign_peers_to_network(db, network, body.peer_ids)
+
+
+@router.delete("/{network_id}/peers/{peer_id}", response_model=NetworkResponse)
+def remove_peer(
+    network_id: int,
+    peer_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Remove a peer from a network."""
+    network = network_service.get_network(db, network_id)
+    if not network:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
+    return network_service.remove_peer_from_network(db, network, peer_id)
 
 
 @router.post("/check-conflict", response_model=SubnetConflictResponse)

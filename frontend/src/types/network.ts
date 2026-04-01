@@ -5,6 +5,7 @@ export interface Network {
   description: string | null;
   network_type: "lan" | "vpn";
   is_default: boolean;
+  peer_id: number | null;
   peer_count: number;
   peers: Array<{
     id: number;
@@ -13,19 +14,6 @@ export interface Network {
     assigned_ip: string;
     device_type: string | null;
   }>;
-}
-
-export interface Zone {
-  id: number;
-  name: string;
-  description: string | null;
-  networks: ZoneNetwork[];
-}
-
-export interface ZoneNetwork {
-  id: number;
-  cidr: string;
-  description: string | null;
 }
 
 export interface PeerGroup {
@@ -37,24 +25,30 @@ export interface PeerGroup {
 
 export interface Policy {
   id: number;
-  group_id: number;
-  zone_id: number;
+  source_group_id: number;
+  source_group_name: string | null;
+  dest_group_id: number;
+  dest_group_name: string | null;
+  direction: "outbound" | "inbound" | "both";
   action: "allow" | "deny";
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PolicyMatrixCell {
   action: "allow" | "deny" | null;
   policy_id: number | null;
+  direction: "outbound" | "inbound" | "both" | null;
 }
 
 export interface PolicyMatrixRow {
-  group_id: number;
-  group_name: string;
-  zones: Record<number, PolicyMatrixCell>;
+  source_group_id: number;
+  source_group_name: string;
+  dest_groups: Record<number, PolicyMatrixCell>;
 }
 
 export interface PolicyMatrix {
-  groups: PolicyMatrixRow[];
-  zone_ids: number[];
-  zone_names: Record<number, string>;
+  source_groups: PolicyMatrixRow[];
+  dest_group_ids: number[];
+  dest_group_names: Record<number, string>;
 }

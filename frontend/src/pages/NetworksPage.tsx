@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { networksApi } from "@/api/networks";
+import { networksApi, peersApi } from "@/api/networks";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,8 +16,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, Globe, Building2, ChevronDown, ChevronRight, Router, Server, Laptop, Smartphone } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Plus, Trash2, Globe, Building2, ChevronDown, ChevronRight, Router, Server, Laptop, Smartphone, Shield, X } from "lucide-react";
 import type { Network } from "@/types/network";
+import type { Peer } from "@/types/peer";
 
 const schema = z.object({
   name: z.string().min(1, "Required"),
@@ -40,6 +49,8 @@ const peerTypeIcons: Record<string, React.ReactNode> = {
 
 function NetworkRow({ network }: { network: Network }) {
   const [expanded, setExpanded] = useState(false);
+  const [editPeers, setEditPeers] = useState(false);
+  const [selectedPeerIds, setSelectedPeerIds] = useState<number[]>(network.peers.map((p: any) => p.id));
   const qc = useQueryClient();
 
   const del = useMutation({
@@ -47,19 +58,35 @@ function NetworkRow({ network }: { network: Network }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
   });
 
+  const assignPeers = useMutation({
+    mutationFn: ({ networkId, peerIds }: { networkId: number; peerIds: number[] }) =>
+      networksApi.assignPeers(networkId, peerIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["networks"] });
+      setEditPeers(false);
+    },
+  });
+
+  const removePeer = useMutation({
+    mutationFn: ({ networkId, peerId }: { networkId: number; peerId: number }) =>
+      networksApi.removePeer(networkId, peerId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
+  });
+
+  const { data: allPeers = [] } = useQuery({
+    queryKey: ["peers"],
+    queryFn: () => peersApi.list().then((r) => r.data),
+  });
+
   return (
     <>
       <tr className="border-b last:border-0 hover:bg-muted/20">
         <td className="px-4 py-2">
           <button
-            onClick={() => network.peers.length > 0 && setExpanded(!expanded)}
+            onClick={() => setExpanded(!expanded)}
             className="flex items-center gap-2 font-medium"
           >
-            {network.peers.length > 0 ? (
-              expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
-            ) : (
-              <span className="w-4" />
-            )}
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             {network.name}
           </button>
         </td>
@@ -82,33 +109,104 @@ function NetworkRow({ network }: { network: Network }) {
           )}
         </td>
         <td className="px-4 py-2 text-right">
-          <Button variant="ghost" size="icon" onClick={() => del.mutate(network.id)}>
-            <Trash2 className="h-4 w-4 text-destructive" />
-          </Button>
+          <div className="flex items-center justify-end gap-1">
+            <Button variant="ghost" size="icon" onClick={() => {
+              setSelectedPeerIds(network.peers.map((p: any) => p.id));
+              setEditPeers(true);
+            }} title="Edit peers">
+              <Shield className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => del.mutate(network.id)}>
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
         </td>
       </tr>
-      {expanded && network.peers.length > 0 && (
+      {expanded && (
         <tr className="bg-muted/10">
           <td colSpan={6} className="px-4 py-2">
             <div className="ml-6 space-y-1">
               <p className="text-xs text-muted-foreground font-medium mb-2">Peers asociados a esta red:</p>
-              {network.peers.map((peer) => (
-                <div key={peer.id} className="flex items-center gap-3 text-xs py-1">
-                  <span className="text-muted-foreground">
-                    {peerTypeIcons[peer.device_type ?? peer.peer_type] ?? <Laptop className="h-3 w-3" />}
-                  </span>
-                  <span className="font-medium">{peer.name}</span>
-                  <Badge variant="outline" className="text-[10px]">{peer.peer_type}</Badge>
-                  <span className="font-mono text-muted-foreground">{peer.assigned_ip}</span>
-                  {peer.device_type && (
-                    <span className="text-muted-foreground/70">({peer.device_type})</span>
-                  )}
-                </div>
-              ))}
+              {network.peers.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No peers assigned</p>
+              ) : (
+                network.peers.map((peer: any) => (
+                  <div key={peer.id} className="flex items-center gap-3 text-xs py-1">
+                    <span className="text-muted-foreground">
+                      {peerTypeIcons[peer.device_type ?? peer.peer_type] ?? <Laptop className="h-3 w-3" />}
+                    </span>
+                    <span className="font-medium">{peer.name}</span>
+                    <Badge variant="outline" className="text-[10px]">{peer.peer_type}</Badge>
+                    <span className="font-mono text-muted-foreground">{peer.assigned_ip}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-4 w-4 ml-auto"
+                      onClick={() => removePeer.mutate({ networkId: network.id, peerId: peer.id })}
+                    >
+                      <X className="h-3 w-3 text-destructive" />
+                    </Button>
+                  </div>
+                ))
+              )}
             </div>
           </td>
         </tr>
       )}
+
+      {/* Edit Peers Dialog */}
+      <Dialog open={editPeers} onOpenChange={(open) => !open && setEditPeers(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Peers — {network.name}</DialogTitle>
+            <DialogDescription>
+              Select which peers should have access to this network.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            {allPeers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No peers available.</p>
+            ) : (
+              allPeers.map((p: Peer) => {
+                const checked = selectedPeerIds.includes(p.id);
+                return (
+                  <label key={p.id} className="flex items-center gap-3 p-2 rounded hover:bg-accent cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedPeerIds((prev) => [...prev, p.id]);
+                        } else {
+                          setSelectedPeerIds((prev) => prev.filter((id) => id !== p.id));
+                        }
+                      }}
+                      className="h-4 w-4 rounded border-input"
+                    />
+                    <div className="flex items-center gap-2">
+                      {peerTypeIcons[p.device_type ?? p.peer_type]}
+                      <span className="text-sm font-medium">{p.name}</span>
+                      <Badge variant="outline" className="text-[10px]">{p.peer_type}</Badge>
+                      <span className="text-xs font-mono text-muted-foreground">{p.assigned_ip}</span>
+                    </div>
+                  </label>
+                );
+              })
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditPeers(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => assignPeers.mutate({ networkId: network.id, peerIds: selectedPeerIds })}
+              disabled={assignPeers.isPending}
+            >
+              {assignPeers.isPending ? "Saving..." : "Save Peers"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

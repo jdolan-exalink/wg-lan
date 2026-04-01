@@ -1,4 +1,4 @@
-export type PeerType = "roadwarrior" | "branch_office";
+export type PeerType = "roadwarrior" | "branch_office" | "server";
 export type DeviceType = "laptop" | "ios" | "android" | "router" | "server";
 export type TunnelMode = "full" | "split";
 
@@ -15,6 +15,8 @@ export interface Peer {
   dns: string | null;
   persistent_keepalive: number;
   is_enabled: boolean;
+  is_system: boolean;
+  group_ids: number[];
   created_at: string;
   updated_at: string;
   revoked_at: string | null;

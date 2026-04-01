@@ -7,8 +7,9 @@ class NetworkCreate(BaseModel):
     name: str
     subnet: str
     description: str | None = None
-    network_type: str = "lan"  # 'lan' or 'vpn'
+    network_type: str = "lan"
     is_default: bool = False
+    peer_id: int | None = None
 
     @field_validator("subnet")
     @classmethod
@@ -23,6 +24,7 @@ class NetworkUpdate(BaseModel):
     description: str | None = None
     network_type: str | None = None
     is_default: bool | None = None
+    peer_id: int | None = None
 
 
 class NetworkResponse(BaseModel):
@@ -32,6 +34,7 @@ class NetworkResponse(BaseModel):
     description: str | None
     network_type: str
     is_default: bool
+    peer_id: int | None = None
     peer_count: int = 0
     peers: list[dict] = []
 
@@ -46,3 +49,7 @@ class SubnetConflictCheck(BaseModel):
 class SubnetConflictResponse(BaseModel):
     has_conflict: bool
     conflicting_network: str | None = None
+
+
+class NetworkPeersUpdate(BaseModel):
+    peer_ids: list[int] = []

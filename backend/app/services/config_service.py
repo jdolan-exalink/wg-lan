@@ -7,6 +7,7 @@ All config strings are pure text — no subprocess calls here.
 
 import json
 
+from app.config import settings
 from app.models.peer import Peer
 from app.models.server_config import ServerConfig
 from app.utils.ip_utils import format_allowed_ips
@@ -68,46 +69,119 @@ def generate_mikrotik_config(
 ) -> str:
     """
     Build a MikroTik RouterOS WireGuard import file.
-    MikroTik accepts standard WireGuard .conf format (ROS 7.19+) but is very strict:
-    - NO comments (#) at the start
-    - NO extra whitespace
-    - Clean [Interface] and [Peer] sections only
+    
+    MikroTik uses its own import format (NOT standard .conf):
+    - No [Interface]/[Peer] section headers
+    - Uses key: value format (no spaces around colon)
+    - Multiple allowed-addresses on one line, comma-separated
+    
+    This format is used with: /interface wireguard/wg-import file=
     """
+    # Build allowed-address list (comma-separated, no spaces)
     if peer.tunnel_mode == "full":
-        client_allowed_ips = "0.0.0.0/0, ::/0"
+        allowed_addresses = "0.0.0.0/0,::/0"
     else:
         if allowed_cidrs:
-            client_allowed_ips = format_allowed_ips(allowed_cidrs)
+            allowed_addresses = ",".join(allowed_cidrs)
         else:
-            client_allowed_ips = "0.0.0.0/32"
+            allowed_addresses = "0.0.0.0/32"
 
-    # Standard WireGuard .conf format — MikroTik imports this directly
+    # MikroTik import format (NOT standard WireGuard .conf)
     lines = [
-        "[Interface]",
-        f"Address = {peer.assigned_ip}",
-        f"PrivateKey = {peer.private_key}",
+        f"interface: wg0",
+        f"public-key: {server_config.public_key}",
+        f"private-key: {peer.private_key}",
+        f"allowed-address: {allowed_addresses}",
+        f"client-address: {peer.assigned_ip}",
+        f"client-endpoint: {server_config.endpoint}:{server_config.listen_port}",
     ]
+    
     if peer.dns:
-        lines.append(f"DNS = {peer.dns}")
+        lines.append(f"client-dns: {peer.dns}")
     elif server_config.dns:
-        lines.append(f"DNS = {server_config.dns}")
-
-    lines += [
-        "",
-        "[Peer]",
-        f"PublicKey = {server_config.public_key}",
-    ]
-    if peer.preshared_key:
-        lines.append(f"PresharedKey = {peer.preshared_key}")
-
-    lines += [
-        f"AllowedIPs = {client_allowed_ips}",
-        f"Endpoint = {server_config.endpoint}:{server_config.listen_port}",
-    ]
+        lines.append(f"client-dns: {server_config.dns}")
+    
     if peer.persistent_keepalive and peer.persistent_keepalive > 0:
-        lines.append(f"PersistentKeepalive = {peer.persistent_keepalive}")
+        lines.append(f"client-keepalive: {peer.persistent_keepalive}")
+    
+    if peer.preshared_key:
+        lines.append(f"preshared-key: {peer.preshared_key}")
 
+    # Join with LF (Unix line endings) and add final newline
     return "\n".join(lines) + "\n"
+
+
+def generate_mikrotik_manual_commands(
+    peer: Peer,
+    server_config: ServerConfig,
+    allowed_cidrs: list[str],
+) -> str:
+    """
+    Generate MikroTik RouterOS CLI commands for manual configuration.
+    This is often more reliable than importing a file.
+    
+    Returns RouterOS CLI commands that can be pasted directly into the terminal.
+    Includes:
+    - WireGuard interface creation
+    - IP address assignment
+    - Peer configuration
+    - Static routes to VPN subnet and all allowed networks
+    """
+    import ipaddress
+    
+    # Build allowed-address list (comma-separated, no spaces)
+    if peer.tunnel_mode == "full":
+        allowed_addresses = "0.0.0.0/0,::/0"
+    else:
+        if allowed_cidrs:
+            allowed_addresses = ",".join(allowed_cidrs)
+        else:
+            allowed_addresses = "0.0.0.0/32"
+    
+    # Parse endpoint
+    endpoint = server_config.endpoint
+    port = server_config.listen_port
+    
+    # Generate interface name from peer name (safe characters only)
+    iface_name = f"wg-{peer.name.lower().replace(' ', '-').replace('_', '-')}"
+    
+    commands = [
+        f"# === WireGuard Interface ===",
+        f"/interface wireguard add name={iface_name} private-key=\"{peer.private_key}\"",
+        f"/ip address add address={peer.assigned_ip} interface={iface_name}",
+        f"",
+        f"# === WireGuard Peer ===",
+        f"/interface wireguard peers add interface={iface_name} public-key=\"{server_config.public_key}\" endpoint-address={endpoint} endpoint-port={port} allowed-address={allowed_addresses} persistent-keepalive={peer.persistent_keepalive or 25}",
+    ]
+    
+    if peer.dns or server_config.dns:
+        dns = peer.dns or server_config.dns
+        commands.append(f"/ip dns set servers={dns}")
+    
+    # Add static routes to VPN subnet and all allowed networks
+    commands.append(f"")
+    commands.append(f"# === Static Routes ===")
+    
+    # Parse VPN subnet
+    vpn_network = ipaddress.ip_network(server_config.address, strict=False)
+    vpn_subnet_str = str(vpn_network)
+    
+    # Route to VPN subnet (so MikroTik can reach other VPN peers)
+    commands.append(f"/ip route add dst-address={vpn_subnet_str} gateway={iface_name}")
+    
+    # Routes to all allowed networks (zones, other branch offices, etc.)
+    for cidr in allowed_cidrs:
+        try:
+            cidr_network = ipaddress.ip_network(cidr, strict=False)
+            # Skip if this CIDR is the VPN subnet itself or contained within it
+            if cidr_network == vpn_network or cidr_network.subnet_of(vpn_network):
+                continue
+            commands.append(f"/ip route add dst-address={cidr} gateway={iface_name}")
+        except ValueError:
+            # Skip invalid CIDRs
+            continue
+    
+    return "\n".join(commands) + "\n"
 
 
 def generate_server_peer_block(peer: Peer, server_allowed_ips: list[str]) -> str:

@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, AlertTriangle, AlertCircle, Info, XCircle, ChevronDown, ChevronRight, Activity } from "lucide-react";
+import { RefreshCw, AlertTriangle, AlertCircle, Info, XCircle, ChevronDown, ChevronRight, Activity, CheckCircle2, Ban, Shield, ShieldCheck, ShieldX } from "lucide-react";
 import type { ConnectionLog } from "@/types/connection-log";
 
 const severityConfig: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
@@ -30,6 +30,8 @@ const eventTypeLabels: Record<string, string> = {
   interface_up: "Interface Up",
   interface_down: "Interface Down",
   error: "Error",
+  policy_compiled: "Policy Compiled",
+  iptables_applied: "iptables Applied",
 };
 
 function LogRow({ log }: { log: ConnectionLog }) {
@@ -282,6 +284,88 @@ export function LogsPage() {
           Sync Status
         </Button>
       </div>
+
+      {/* Firewall Rules Panel */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Shield className="h-4 w-4" />
+            Firewall Rules & Policies
+          </CardTitle>
+          <CardDescription>
+            Active iptables rules and policy compilation results
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/40">
+                <th className="w-8 px-4 py-2" />
+                <th className="text-left px-4 py-2 font-medium">Status</th>
+                <th className="text-left px-4 py-2 font-medium">Rule Type</th>
+                <th className="text-left px-4 py-2 font-medium">Source</th>
+                <th className="text-left px-4 py-2 font-medium">Destination</th>
+                <th className="text-left px-4 py-2 font-medium">Action</th>
+                <th className="text-left px-4 py-2 font-medium">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs
+                .filter(log => log.event_type === "policy_compiled" || log.event_type === "iptables_applied")
+                .slice(0, 20)
+                .map((log) => {
+                  const isAllowed = log.severity === "info";
+                  const isBlocked = log.severity === "warning";
+                  const details = log.details ? JSON.parse(log.details) : null;
+                  
+                  return (
+                    <tr key={log.id} className="border-b last:border-0 hover:bg-muted/20">
+                      <td className="px-4 py-2">
+                        {isAllowed ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        ) : isBlocked ? (
+                          <Ban className="h-4 w-4 text-red-500" />
+                        ) : (
+                          <Shield className="h-4 w-4 text-blue-400" />
+                        )}
+                      </td>
+                      <td className="px-4 py-2">
+                        <Badge
+                          variant={isAllowed ? "default" : isBlocked ? "destructive" : "secondary"}
+                          className="text-xs"
+                        >
+                          {isAllowed ? "ALLOW" : isBlocked ? "BLOCK" : "INFO"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2">
+                        <Badge variant="outline" className="text-xs">
+                          {eventTypeLabels[log.event_type] || log.event_type}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs">
+                        {details?.source || log.peer_ip || "—"}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs">
+                        {details?.destination || "—"}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span className={isAllowed ? "text-green-500" : isBlocked ? "text-red-500" : "text-blue-400"}>
+                          {log.message}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-xs text-muted-foreground">
+                        {new Date(log.timestamp).toLocaleString()}
+                      </td>
+                    </tr>
+                  );
+                })}
+              {logs.filter(log => log.event_type === "policy_compiled" || log.event_type === "iptables_applied").length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No firewall rules logged yet</td></tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
 
       {/* Logs Table */}
       <Card>

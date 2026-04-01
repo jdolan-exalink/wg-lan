@@ -39,6 +39,7 @@ def get_network_with_peers(db: Session, network_id: int) -> dict:
         "description": network.description,
         "network_type": network.network_type,
         "is_default": network.is_default,
+        "peer_id": network.peer_id,
         "peer_count": len(peers),
         "peers": peer_info,
     }
@@ -67,6 +68,7 @@ def list_networks_with_peers(db: Session) -> list[dict]:
             "description": network.description,
             "network_type": network.network_type,
             "is_default": network.is_default,
+            "peer_id": network.peer_id,
             "peer_count": len(peers),
             "peers": peer_info,
         })
@@ -98,6 +100,53 @@ def update_network(db: Session, network: Network, data: NetworkUpdate) -> Networ
     for key, value in updates.items():
         setattr(network, key, value)
     db.commit()
+    db.refresh(network)
+    return network
+
+
+def assign_peers_to_network(db: Session, network: Network, peer_ids: list[int]) -> Network:
+    """Assign peers to a network. Removes existing assignments first."""
+    # Remove existing assignments for this network
+    db.query(Peer).filter(Peer.network_id == network.id).update({"network_id": None})
+    
+    # Assign new peers
+    if peer_ids:
+        db.query(Peer).filter(Peer.id.in_(peer_ids)).update({"network_id": network.id}, synchronize_session=False)
+    
+    db.commit()
+    db.refresh(network)
+    return network
+
+
+def remove_peer_from_network(db: Session, network: Network, peer_id: int) -> Network:
+    """Remove a peer from a network."""
+    peer = db.query(Peer).filter(Peer.id == peer_id).first()
+    if peer and peer.network_id == network.id:
+        peer.network_id = None
+        db.commit()
+    db.refresh(network)
+    return network
+
+
+def delete_network(db: Session, network: Network) -> None:
+    """Delete a network and unassign any peers."""
+    db.query(Peer).filter(Peer.network_id == network.id).update({"network_id": None})
+    db.delete(network)
+    db.commit()
+
+
+def check_conflict(db: Session, subnet: str, exclude_id: int | None = None) -> tuple[bool, str | None]:
+    """Check if a subnet conflicts with existing networks."""
+    query = db.query(Network)
+    if exclude_id:
+        query = query.filter(Network.id != exclude_id)
+    
+    existing_networks = query.all()
+    for network in existing_networks:
+        if subnets_overlap(subnet, network.subnet):
+            return True, network.name
+    
+    return False, None
     db.refresh(network)
     return network
 

@@ -8,6 +8,7 @@ Uses 'wg syncconf' to apply config changes without dropping existing connections
 import json
 import subprocess
 import time
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +18,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.peer import Peer
 from app.services.config_service import build_server_allowed_ips, generate_full_server_config
-from app.services import connection_log_service
+from app.services import connection_log_service, iptables_service
+
+logger = logging.getLogger(__name__)
 
 
 ONLINE_THRESHOLD_SECONDS = 180
@@ -133,6 +136,12 @@ def apply_config(db: Session) -> None:
         details={"peer_count": len(peers)},
         duration_ms=duration_ms,
     )
+    
+    # Apply dynamic iptables rules (SNAT for branch offices, forwarding, isolation)
+    try:
+        iptables_service.apply_iptables_rules(db)
+    except Exception as e:
+        logger.warning(f"Failed to apply iptables rules: {e}")
 
 
 def ensure_interface_up(db: Session) -> None:

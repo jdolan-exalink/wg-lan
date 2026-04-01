@@ -39,10 +39,21 @@ class PeerUpdate(BaseModel):
     dns: str | None = None
     persistent_keepalive: int | None = None
     tunnel_mode: Literal["full", "split"] | None = None
+    remote_subnets: list[str] | None = None
+
+    @field_validator("remote_subnets")
+    @classmethod
+    def validate_subnets(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        for cidr in v:
+            if not is_valid_cidr(cidr):
+                raise ValueError(f"Invalid CIDR: {cidr}")
+        return v
 
 
 class PeerOverrideCreate(BaseModel):
-    zone_id: int
+    network_id: int
     action: Literal["allow", "deny"]
     reason: str | None = None
 
@@ -60,6 +71,8 @@ class PeerResponse(BaseModel):
     dns: str | None
     persistent_keepalive: int
     is_enabled: bool
+    is_system: bool = False
+    group_ids: list[int] = []
     created_at: str
     updated_at: str
     revoked_at: str | None
@@ -67,8 +80,15 @@ class PeerResponse(BaseModel):
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_peer(cls, peer) -> "PeerResponse":
+    def from_orm_peer(cls, peer, db=None) -> "PeerResponse":
         remote = json.loads(peer.remote_subnets) if peer.remote_subnets else []
+        group_ids: list[int] = []
+        if db is not None:
+            from app.models.group import PeerGroupMember
+            memberships = db.query(PeerGroupMember).filter(
+                PeerGroupMember.peer_id == peer.id
+            ).all()
+            group_ids = [m.group_id for m in memberships]
         return cls(
             id=peer.id,
             name=peer.name,
@@ -82,6 +102,8 @@ class PeerResponse(BaseModel):
             dns=peer.dns,
             persistent_keepalive=peer.persistent_keepalive,
             is_enabled=peer.is_enabled,
+            is_system=getattr(peer, 'is_system', False),
+            group_ids=group_ids,
             created_at=peer.created_at.isoformat(),
             updated_at=peer.updated_at.isoformat(),
             revoked_at=peer.revoked_at.isoformat() if peer.revoked_at else None,

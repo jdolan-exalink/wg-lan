@@ -1,5 +1,6 @@
 import client from "./client";
-import type { Network, Zone, PeerGroup, Policy, PolicyMatrix } from "@/types/network";
+import type { Network, PeerGroup, Policy, PolicyMatrix } from "@/types/network";
+import type { Peer } from "@/types/peer";
 
 export const networksApi = {
   list: () => client.get<Network[]>("/networks"),
@@ -11,20 +12,14 @@ export const networksApi = {
       "/networks/check-conflict",
       { subnet, exclude_id }
     ),
+  assignPeers: (networkId: number, peerIds: number[]) =>
+    client.post<Network>(`/networks/${networkId}/peers`, { peer_ids: peerIds }),
+  removePeer: (networkId: number, peerId: number) =>
+    client.delete<Network>(`/networks/${networkId}/peers/${peerId}`),
 };
 
-export const zonesApi = {
-  list: () => client.get<Zone[]>("/zones"),
-  get: (id: number) => client.get<Zone>(`/zones/${id}`),
-  create: (data: { name: string; description?: string; networks: { cidr: string }[] }) =>
-    client.post<Zone>("/zones", data),
-  update: (id: number, data: { name?: string; description?: string }) =>
-    client.patch<Zone>(`/zones/${id}`, data),
-  delete: (id: number) => client.delete(`/zones/${id}`),
-  addNetwork: (zone_id: number, cidr: string, description?: string) =>
-    client.post(`/zones/${zone_id}/networks`, { cidr, description }),
-  deleteNetwork: (zone_id: number, zn_id: number) =>
-    client.delete(`/zones/${zone_id}/networks/${zn_id}`),
+export const peersApi = {
+  list: () => client.get<Peer[]>("/peers"),
 };
 
 export const groupsApi = {
@@ -44,10 +39,12 @@ export const groupsApi = {
 };
 
 export const policiesApi = {
-  list: (group_id?: number, zone_id?: number) =>
-    client.get<Policy[]>("/policies", { params: { group_id, zone_id } }),
+  list: (source_group_id?: number, dest_group_id?: number) =>
+    client.get<Policy[]>("/policies", { params: { source_group_id, dest_group_id } }),
   matrix: () => client.get<PolicyMatrix>("/policies/matrix"),
-  upsert: (group_id: number, zone_id: number, action: "allow" | "deny") =>
-    client.post<Policy>("/policies", { group_id, zone_id, action }),
+  create: (data: { source_group_id: number; dest_group_id: number; direction: "outbound" | "inbound" | "both"; action: "allow" | "deny" }) =>
+    client.post<Policy>("/policies", data),
+  update: (id: number, data: { direction?: "outbound" | "inbound" | "both"; action?: "allow" | "deny" }) =>
+    client.patch<Policy>(`/policies/${id}`, data),
   delete: (id: number) => client.delete(`/policies/${id}`),
 };

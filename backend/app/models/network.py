@@ -1,6 +1,6 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, Integer, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -14,5 +14,8 @@ class Network(Base):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     network_type: Mapped[str] = mapped_column(String, nullable=False, default="lan")  # 'lan' or 'vpn'
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    peer_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("peers.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    peer: Mapped["Peer"] = relationship("Peer", foreign_keys=[peer_id], back_populates="networks_owned")
