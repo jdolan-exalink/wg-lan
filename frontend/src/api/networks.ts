@@ -7,6 +7,7 @@ export const networksApi = {
   create: (data: Omit<Network, "id">) => client.post<Network>("/networks", data),
   update: (id: number, data: Partial<Network>) => client.patch<Network>(`/networks/${id}`, data),
   delete: (id: number) => client.delete(`/networks/${id}`),
+  apply: () => client.post("/networks/apply"),
   checkConflict: (subnet: string, exclude_id?: number) =>
     client.post<{ has_conflict: boolean; conflicting_network: string | null }>(
       "/networks/check-conflict",
@@ -14,6 +15,8 @@ export const networksApi = {
     ),
   assignPeers: (networkId: number, peerIds: number[]) =>
     client.post<Network>(`/networks/${networkId}/peers`, { peer_ids: peerIds }),
+  addPeer: (networkId: number, peerId: number) =>
+    client.post<Network>(`/networks/${networkId}/peers/${peerId}`),
   removePeer: (networkId: number, peerId: number) =>
     client.delete<Network>(`/networks/${networkId}/peers/${peerId}`),
 };

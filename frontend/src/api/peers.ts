@@ -1,5 +1,5 @@
 import client from "./client";
-import type { Peer, RoadWarriorCreate, BranchOfficeCreate, PermissionSummary } from "@/types/peer";
+import type { Peer, RoadWarriorCreate, BranchOfficeCreate, PermissionSummary, PeerSyncStatus } from "@/types/peer";
 
 export const peersApi = {
   list: (peer_type?: string) =>
@@ -34,9 +34,12 @@ export const peersApi = {
   getPermissions: (id: number) =>
     client.get<PermissionSummary>(`/peers/${id}/permissions`),
 
-  upsertOverride: (id: number, zone_id: number, action: "allow" | "deny", reason?: string) =>
-    client.post(`/peers/${id}/overrides`, { zone_id, action, reason }),
+  getSyncStatus: (id: number) =>
+    client.get<PeerSyncStatus>(`/peers/${id}/sync-status`),
 
-  deleteOverride: (id: number, zone_id: number) =>
-    client.delete(`/peers/${id}/overrides/${zone_id}`),
+  upsertOverride: (id: number, network_id: number, action: "allow" | "deny", reason?: string) =>
+    client.post(`/peers/${id}/overrides`, { network_id, action, reason }),
+
+  deleteOverride: (id: number, network_id: number) =>
+    client.delete(`/peers/${id}/overrides/${network_id}`),
 };

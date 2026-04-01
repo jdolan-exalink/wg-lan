@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -27,12 +27,29 @@ class Peer(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    last_config_hash: Mapped[str | None] = mapped_column(String, nullable=True)  # Hash of last downloaded config
+    last_config_downloaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # When config was last downloaded
 
     network: Mapped["Network"] = relationship("Network", foreign_keys=[network_id])
     networks_owned: Mapped[list["Network"]] = relationship("Network", back_populates="peer", foreign_keys="Network.peer_id")
+    network_access: Mapped[list["PeerNetworkAccess"]] = relationship("PeerNetworkAccess", cascade="all, delete-orphan", back_populates="peer")
     group_memberships: Mapped[list["PeerGroupMember"]] = relationship(
         "PeerGroupMember", cascade="all, delete-orphan"
     )
+
+
+class PeerNetworkAccess(Base):
+    __tablename__ = "peer_network_access"
+    __table_args__ = (
+        UniqueConstraint("peer_id", "network_id", name="uq_peer_network_access"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    peer_id: Mapped[int] = mapped_column(Integer, ForeignKey("peers.id", ondelete="CASCADE"), nullable=False)
+    network_id: Mapped[int] = mapped_column(Integer, ForeignKey("networks.id", ondelete="CASCADE"), nullable=False)
+
+    peer: Mapped["Peer"] = relationship("Peer", back_populates="network_access")
+    network: Mapped["Network"] = relationship("Network", back_populates="peer_access")
 
 
 class PeerOverride(Base):

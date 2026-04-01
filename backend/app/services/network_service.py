@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.models.network import Network
-from app.models.peer import Peer
+from app.models.peer import Peer, PeerNetworkAccess
 from app.schemas.network import NetworkCreate, NetworkUpdate
 from app.utils.ip_utils import subnets_overlap
 
@@ -15,12 +15,15 @@ def get_network(db: Session, network_id: int) -> Network | None:
 
 
 def get_network_with_peers(db: Session, network_id: int) -> dict:
-    """Get network with associated peer information."""
     network = get_network(db, network_id)
     if not network:
         return {}
 
-    peers = db.query(Peer).filter(Peer.network_id == network_id).all()
+    access_rows = db.query(PeerNetworkAccess).filter(
+        PeerNetworkAccess.network_id == network_id
+    ).all()
+    peer_ids = [a.peer_id for a in access_rows]
+    peers = db.query(Peer).filter(Peer.id.in_(peer_ids)).all() if peer_ids else []
     peer_info = [
         {
             "id": p.id,
@@ -46,11 +49,14 @@ def get_network_with_peers(db: Session, network_id: int) -> dict:
 
 
 def list_networks_with_peers(db: Session) -> list[dict]:
-    """List all networks with their associated peer information."""
     networks = list_networks(db)
     result = []
     for network in networks:
-        peers = db.query(Peer).filter(Peer.network_id == network.id).all()
+        access_rows = db.query(PeerNetworkAccess).filter(
+            PeerNetworkAccess.network_id == network.id
+        ).all()
+        peer_ids = [a.peer_id for a in access_rows]
+        peers = db.query(Peer).filter(Peer.id.in_(peer_ids)).all() if peer_ids else []
         peer_info = [
             {
                 "id": p.id,
@@ -75,12 +81,7 @@ def list_networks_with_peers(db: Session) -> list[dict]:
     return result
 
 
-def get_network(db: Session, network_id: int) -> Network | None:
-    return db.query(Network).filter(Network.id == network_id).first()
-
-
 def create_network(db: Session, data: NetworkCreate) -> Network:
-    # If this is being set as default, unset others
     if data.is_default:
         db.query(Network).filter(Network.is_default == True).update({"is_default": False})
 
@@ -104,54 +105,45 @@ def update_network(db: Session, network: Network, data: NetworkUpdate) -> Networ
     return network
 
 
-def assign_peers_to_network(db: Session, network: Network, peer_ids: list[int]) -> Network:
-    """Assign peers to a network. Removes existing assignments first."""
-    # Remove existing assignments for this network
-    db.query(Peer).filter(Peer.network_id == network.id).update({"network_id": None})
-    
-    # Assign new peers
-    if peer_ids:
-        db.query(Peer).filter(Peer.id.in_(peer_ids)).update({"network_id": network.id}, synchronize_session=False)
-    
-    db.commit()
-    db.refresh(network)
-    return network
-
-
-def remove_peer_from_network(db: Session, network: Network, peer_id: int) -> Network:
-    """Remove a peer from a network."""
-    peer = db.query(Peer).filter(Peer.id == peer_id).first()
-    if peer and peer.network_id == network.id:
-        peer.network_id = None
+def add_peer_to_network(db: Session, network: Network, peer_id: int) -> Network:
+    existing = db.query(PeerNetworkAccess).filter(
+        PeerNetworkAccess.peer_id == peer_id,
+        PeerNetworkAccess.network_id == network.id,
+    ).first()
+    if not existing:
+        db.add(PeerNetworkAccess(peer_id=peer_id, network_id=network.id))
         db.commit()
     db.refresh(network)
     return network
 
 
-def delete_network(db: Session, network: Network) -> None:
-    """Delete a network and unassign any peers."""
-    db.query(Peer).filter(Peer.network_id == network.id).update({"network_id": None})
-    db.delete(network)
+def remove_peer_from_network(db: Session, network: Network, peer_id: int) -> Network:
+    access = db.query(PeerNetworkAccess).filter(
+        PeerNetworkAccess.peer_id == peer_id,
+        PeerNetworkAccess.network_id == network.id,
+    ).first()
+    if access:
+        db.delete(access)
+        db.commit()
+    db.refresh(network)
+    return network
+
+
+def assign_peers_to_network(db: Session, network: Network, peer_ids: list[int]) -> Network:
+    db.query(PeerNetworkAccess).filter(
+        PeerNetworkAccess.network_id == network.id
+    ).delete()
+    for pid in peer_ids:
+        db.add(PeerNetworkAccess(peer_id=pid, network_id=network.id))
     db.commit()
-
-
-def check_conflict(db: Session, subnet: str, exclude_id: int | None = None) -> tuple[bool, str | None]:
-    """Check if a subnet conflicts with existing networks."""
-    query = db.query(Network)
-    if exclude_id:
-        query = query.filter(Network.id != exclude_id)
-    
-    existing_networks = query.all()
-    for network in existing_networks:
-        if subnets_overlap(subnet, network.subnet):
-            return True, network.name
-    
-    return False, None
     db.refresh(network)
     return network
 
 
 def delete_network(db: Session, network: Network) -> None:
+    db.query(PeerNetworkAccess).filter(
+        PeerNetworkAccess.network_id == network.id
+    ).delete()
     db.delete(network)
     db.commit()
 
@@ -159,7 +151,6 @@ def delete_network(db: Session, network: Network) -> None:
 def check_conflict(
     db: Session, subnet: str, exclude_id: int | None = None
 ) -> tuple[bool, str | None]:
-    """Check if a subnet overlaps with any existing network. Returns (has_conflict, conflicting_name)."""
     query = db.query(Network)
     if exclude_id:
         query = query.filter(Network.id != exclude_id)

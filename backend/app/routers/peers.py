@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+import hashlib
 
 from app.database import get_db
 from app.dependencies import require_password_changed
@@ -40,8 +41,25 @@ def list_peers(
     db: Session = Depends(get_db),
     _: User = Depends(require_password_changed),
 ):
+    from app.models.server_config import ServerConfig
+    from app.services.wg_service import get_peer_statuses
+
     peers = peer_service.list_peers(db, peer_type=peer_type)
-    return [PeerResponse.from_orm_peer(p, db=db) for p in peers]
+    wg_statuses = get_peer_statuses()
+    server_cfg = db.query(ServerConfig).first()
+    config_changed_at = server_cfg.last_config_changed_at if server_cfg else None
+
+    result = []
+    for p in peers:
+        wg = wg_statuses.get(p.public_key)
+        if p.last_config_hash is None:
+            sync = "red"
+        elif config_changed_at and p.last_config_downloaded_at and config_changed_at > p.last_config_downloaded_at:
+            sync = "yellow"
+        else:
+            sync = "green"
+        result.append(PeerResponse.from_orm_peer(p, db=db, wg_status=wg, sync_status=sync))
+    return result
 
 
 @router.get("/{peer_id}", response_model=PeerResponse)
@@ -50,10 +68,26 @@ def get_peer(
     db: Session = Depends(get_db),
     _: User = Depends(require_password_changed),
 ):
+    from app.models.server_config import ServerConfig
+    from app.services.wg_service import get_peer_statuses
+
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
-    return PeerResponse.from_orm_peer(peer, db=db)
+
+    wg_statuses = get_peer_statuses()
+    wg = wg_statuses.get(peer.public_key)
+    server_cfg = db.query(ServerConfig).first()
+    config_changed_at = server_cfg.last_config_changed_at if server_cfg else None
+
+    if peer.last_config_hash is None:
+        sync = "red"
+    elif config_changed_at and peer.last_config_downloaded_at and config_changed_at > peer.last_config_downloaded_at:
+        sync = "yellow"
+    else:
+        sync = "green"
+
+    return PeerResponse.from_orm_peer(peer, db=db, wg_status=wg, sync_status=sync)
 
 
 @router.post("/roadwarrior", response_model=PeerResponse, status_code=status.HTTP_201_CREATED)
@@ -107,6 +141,7 @@ def update_peer_groups(
 ):
     """Replace all group memberships for a peer with the given list."""
     from app.models.group import PeerGroupMember
+    from app.services.peer_service import _bump_config_changed
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
@@ -116,8 +151,14 @@ def update_peer_groups(
     for gid in body.peer_ids:
         db.add(PeerGroupMember(peer_id=peer_id, group_id=gid))
 
+    _bump_config_changed(db)
     db.commit()
     db.refresh(peer)
+    try:
+        from app.services import wg_service
+        wg_service.apply_config(db)
+    except Exception:
+        pass
     return PeerResponse.from_orm_peer(peer, db=db)
 
 
@@ -182,6 +223,12 @@ def download_config(
     server_cfg = _get_server_config(db)
     allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     config_str = generate_client_config(peer, server_cfg, allowed_cidrs)
+    
+    from datetime import datetime, timezone
+    peer.last_config_hash = hashlib.sha256(config_str.encode()).hexdigest()
+    peer.last_config_downloaded_at = datetime.now(timezone.utc)
+    db.commit()
+    
     filename = f"{peer.name.lower().replace(' ', '-')}.conf"
     return Response(
         content=config_str,
@@ -266,3 +313,50 @@ def delete_override(
     deleted = peer_service.delete_override(db, peer_id, network_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Override not found")
+
+
+@router.get("/{peer_id}/sync-status")
+def get_sync_status(
+    peer_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """
+    Return sync status for a peer.
+    - green: config matches (no server changes since last download)
+    - yellow: config is outdated (server changed since last download)
+    - red: peer has never downloaded a config
+    """
+    from app.models.server_config import ServerConfig
+    from app.services.wg_service import get_peer_statuses
+
+    peer = peer_service.get_peer(db, peer_id)
+    if not peer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
+
+    server_cfg = db.query(ServerConfig).first()
+    config_changed_at = server_cfg.last_config_changed_at if server_cfg else None
+
+    if peer.last_config_hash is None:
+        sync_status = "red"
+        message = "Config never downloaded"
+    elif config_changed_at and peer.last_config_downloaded_at and config_changed_at > peer.last_config_downloaded_at:
+        sync_status = "yellow"
+        message = "Config outdated — server routes changed"
+    else:
+        sync_status = "green"
+        message = "Config is up to date"
+
+    wg_statuses = get_peer_statuses()
+    wg = wg_statuses.get(peer.public_key)
+    is_online = wg.is_online if wg else False
+
+    return {
+        "peer_id": peer.id,
+        "peer_name": peer.name,
+        "sync_status": sync_status,
+        "sync_message": message,
+        "is_online": is_online,
+        "last_config_downloaded_at": peer.last_config_downloaded_at.isoformat() if peer.last_config_downloaded_at else None,
+        "last_config_changed_at": config_changed_at.isoformat() if config_changed_at else None,
+    }

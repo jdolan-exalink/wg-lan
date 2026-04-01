@@ -8,15 +8,12 @@ services:
       - NET_ADMIN
       - SYS_MODULE
 
+    env_file: .env
+    environment:
+      # Container-internal paths (override the host-relative paths in .env)
+      - NETLOOM_DB_PATH=/app/data/netloom.db
+      - NETLOOM_WG_CONFIG_PATH=/etc/wireguard
+
     volumes:
       - ./data:/app/data          # SQLite DB + backups
       - ./config:/etc/wireguard   # WireGuard configs
-    environment:
-      - NETLOOM_SECRET_KEY=${NETLOOM_SECRET_KEY:-change-me-in-production}
-      - NETLOOM_ADMIN_PASSWORD=${NETLOOM_ADMIN_PASSWORD:-admin123}
-      - NETLOOM_SERVER_ENDPOINT=${NETLOOM_SERVER_ENDPOINT:-vpn.example.com}
-      - NETLOOM_SERVER_PORT=${NETLOOM_SERVER_PORT:-51820}
-      - NETLOOM_SUBNET=${NETLOOM_SUBNET:-100.169.0.0/16}
-      - NETLOOM_DB_PATH=/app/data/netloom.db
-      - NETLOOM_WG_CONFIG_PATH=/etc/wireguard
-      - NETLOOM_WG_INTERFACE=wg0

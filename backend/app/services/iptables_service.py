@@ -123,23 +123,78 @@ def apply_iptables_rules(db: Session) -> None:
     logger.info(f"Branch office subnets: {branch_subnets}")
     
     # === Clean up old rules ===
-    # Remove old NetLoom chain links
-    _run(["iptables", "-D", "FORWARD", "-j", FORWARD_CHAIN])
-    _run(["iptables", "-t", "nat", "-D", "POSTROUTING", "-j", POSTROUTING_CHAIN])
+    # Remove ALL instances of NetLoom rules from FORWARD chain
+    while True:
+        result = _run(["iptables", "-D", "FORWARD", "-i", settings.wg_interface, "-j", "ACCEPT"])
+        if result.returncode != 0:
+            break
+    while True:
+        result = _run(["iptables", "-D", "FORWARD", "-o", settings.wg_interface, "-j", "ACCEPT"])
+        if result.returncode != 0:
+            break
+    while True:
+        result = _run(["iptables", "-D", "FORWARD", "-i", settings.wg_interface, "-o", settings.wg_interface, "-j", "DROP"])
+        if result.returncode != 0:
+            break
+    
+    # Remove old NetLoom chain links (all instances)
+    while True:
+        result = _run(["iptables", "-D", "FORWARD", "-j", FORWARD_CHAIN])
+        if result.returncode != 0:
+            break
+    while True:
+        result = _run(["iptables", "-t", "nat", "-D", "POSTROUTING", "-j", POSTROUTING_CHAIN])
+        if result.returncode != 0:
+            break
+    
+    # Remove ALL SNAT rules to our server IP from POSTROUTING (including stale ones)
+    # We parse the rules and delete by line number to handle any source subnet
+    result = _run(["iptables", "-t", "nat", "-S", "POSTROUTING"])
+    if result.returncode == 0:
+        # Collect line numbers of SNAT rules to our server IP (in reverse order)
+        # Note: -S output includes the policy line (-P POSTROUTING ACCEPT) which is NOT a real rule
+        # Real rules are -A lines, and their position in the -S output (0-indexed, skipping -P) matches iptables line numbers
+        stale_lines = []
+        rule_num = 0
+        for line in result.stdout.strip().splitlines():
+            if line.startswith("-P "):
+                continue  # Skip policy line
+            rule_num += 1
+            if "SNAT" in line and f"--to-source {server_ip}" in line:
+                stale_lines.append(rule_num)
+        
+        # Delete in reverse order so line numbers don't shift
+        for line_num in reversed(stale_lines):
+            _run(["iptables", "-t", "nat", "-D", "POSTROUTING", str(line_num)])
+            logger.info(f"Removed stale SNAT rule at line {line_num}")
+
+    while True:
+        result = _run([
+            "iptables", "-t", "nat", "-D", "POSTROUTING",
+            "-s", settings.subnet,
+            "-o", outbound_iface,
+            "-j", "MASQUERADE",
+        ])
+        if result.returncode != 0:
+            break
     
     # Flush and delete old chains
-    _run(["iptables", "-F", FORWARD_CHAIN])
-    _run(["iptables", "-X", FORWARD_CHAIN])
-    _run(["iptables", "-t", "nat", "-F", POSTROUTING_CHAIN])
-    _run(["iptables", "-t", "nat", "-X", POSTROUTING_CHAIN])
+    try:
+        _run(["iptables", "-F", FORWARD_CHAIN])
+        _run(["iptables", "-X", FORWARD_CHAIN])
+    except Exception:
+        pass
+    try:
+        _run(["iptables", "-t", "nat", "-F", POSTROUTING_CHAIN])
+        _run(["iptables", "-t", "nat", "-X", POSTROUTING_CHAIN])
+    except Exception:
+        pass
     
     # === FORWARD rules ===
-    # Allow traffic from wg0 to external networks
+    # Allow routed traffic from and back to WireGuard peers.
+    # Peer isolation is enforced by compiled AllowedIPs, not blanket FORWARD drops.
     _run(["iptables", "-A", "FORWARD", "-i", settings.wg_interface, "-j", "ACCEPT"])
-    # Allow return traffic from external networks to wg0
     _run(["iptables", "-A", "FORWARD", "-o", settings.wg_interface, "-j", "ACCEPT"])
-    # Block direct peer-to-peer traffic (isolation)
-    _run(["iptables", "-A", "FORWARD", "-i", settings.wg_interface, "-o", settings.wg_interface, "-j", "DROP"])
     
     # === POSTROUTING rules ===
     # IMPORTANT: Insert SNAT rules at the TOP of POSTROUTING (before any MASQUERADE)
@@ -167,16 +222,24 @@ def apply_iptables_rules(db: Session) -> None:
                 "purpose": "Return traffic routing for branch office"
             }
         )
+
+    _run([
+        "iptables", "-t", "nat", "-A", "POSTROUTING",
+        "-s", settings.subnet,
+        "-o", outbound_iface,
+        "-j", "MASQUERADE",
+    ])
+    logger.info(f"MASQUERADE rule: {settings.subnet} -> {outbound_iface}")
     
     # Log MASQUERADE rule
     connection_log_service.log_connection(
         db=db,
         event_type="iptables_applied",
-        message=f"MASQUERADE on {outbound_iface}",
+        message=f"MASQUERADE: {settings.subnet} -> {outbound_iface}",
         severity="info",
         details={
             "rule_type": "MASQUERADE",
-            "source": "0.0.0.0/0",
+            "source": settings.subnet,
             "destination": outbound_iface,
             "action": "MASQUERADE",
             "purpose": "Outbound NAT"
@@ -187,14 +250,13 @@ def apply_iptables_rules(db: Session) -> None:
     connection_log_service.log_connection(
         db=db,
         event_type="iptables_applied",
-        message=f"FORWARD: wg0 traffic allowed, peer-to-peer blocked",
+        message=f"FORWARD: wg0 traffic allowed",
         severity="info",
         details={
             "rule_type": "FORWARD",
             "rules": [
-                {"action": "ALLOW", "in": "wg0", "out": "*", "purpose": "Allow wg0 to external"},
-                {"action": "ALLOW", "in": "*", "out": "wg0", "purpose": "Allow return traffic"},
-                {"action": "BLOCK", "in": "wg0", "out": "wg0", "purpose": "Block peer-to-peer"}
+                {"action": "ALLOW", "in": "wg0", "out": "*", "purpose": "Allow wg0 routed traffic"},
+                {"action": "ALLOW", "in": "*", "out": "wg0", "purpose": "Allow return traffic"}
             ]
         }
     )

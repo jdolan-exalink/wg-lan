@@ -6,7 +6,7 @@ from app.services.wg_service import get_peer_statuses
 
 
 def get_stats(db: Session) -> DashboardStats:
-    peers = db.query(Peer).all()
+    peers = db.query(Peer).filter(Peer.peer_type != "server").all()
     statuses = get_peer_statuses()
 
     online = 0
@@ -36,7 +36,7 @@ def get_stats(db: Session) -> DashboardStats:
 
 
 def get_peers_status(db: Session) -> list[PeerStatusItem]:
-    peers = db.query(Peer).order_by(Peer.name).all()
+    peers = db.query(Peer).filter(Peer.peer_type != "server").order_by(Peer.name).all()
     statuses = get_peer_statuses()
 
     result = []
@@ -59,7 +59,7 @@ def get_peers_status(db: Session) -> list[PeerStatusItem]:
 
 
 def get_traffic(db: Session) -> list[TrafficItem]:
-    peers = db.query(Peer).filter(Peer.is_enabled == True).all()
+    peers = db.query(Peer).filter(Peer.is_enabled == True, Peer.peer_type != "server").all()
     statuses = get_peer_statuses()
 
     result = []

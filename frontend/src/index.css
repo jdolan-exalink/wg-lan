@@ -3,11 +3,38 @@
 @tailwind utilities;
 
 @layer base {
+  /* ══════════════════════════════════════════════════
+     LIGHT MODE — Netbird-inspired clean slate
+  ══════════════════════════════════════════════════ */
   :root {
+    --c-base:          241 245 249;   /* slate-100  #f1f5f9 */
+    --c-surface-low:   248 250 252;   /* slate-50   #f8fafc */
+    --c-surface:       255 255 255;   /* white               */
+    --c-card:          255 255 255;   /* white               */
+    --c-elevated:      241 245 249;   /* slate-100           */
+    --c-high:          226 232 240;   /* slate-200  #e2e8f0  */
+    --c-bright:        203 213 225;   /* slate-300  #cbd5e1  */
+    --c-text:           15  23  42;   /* slate-900  #0f172a  */
+    --c-text-muted:     71  85 105;   /* slate-600  #475569  */
+    --c-primary:        37  99 235;   /* blue-600   #2563eb  */
+    --c-accent:          0 102 255;   /* brand      #0066ff  */
+    --c-on-accent:     219 234 254;   /* blue-100   #dbeafe  */
+    --c-success:         5 150 105;   /* emerald-600 #059669 */
+    --c-success-bg:    209 250 229;   /* emerald-100 #d1fae5 */
+    --c-success-text:    6  95  70;   /* emerald-800 #065f46 */
+    --c-error:         220  38  38;   /* red-600    #dc2626  */
+    --c-error-bg:      254 226 226;   /* red-100    #fee2e2  */
+    --c-error-text:    153  27  27;   /* red-800    #991b1b  */
+    --c-muted:         100 116 139;   /* slate-500  #64748b  */
+    --c-border:        226 232 240;   /* slate-200  #e2e8f0  */
+
+    /* shadcn / Radix compatibility */
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --primary: 221.2 83.2% 53.3%;
@@ -24,11 +51,38 @@
     --radius: 0.5rem;
   }
 
+  /* ══════════════════════════════════════════════════
+     DARK MODE — Ubiquiti-inspired deep navy
+  ══════════════════════════════════════════════════ */
   .dark {
+    --c-base:           11  15  26;   /* #0b0f1a */
+    --c-surface-low:    13  18  32;   /* #0d1220 */
+    --c-surface:        17  24  39;   /* #111827 */
+    --c-card:           20  30  46;   /* #141e2e */
+    --c-elevated:       26  37  64;   /* #1a2540 */
+    --c-high:           36  51  84;   /* #243354 */
+    --c-bright:         45  62  94;   /* #2d3e5e */
+    --c-text:          241 245 249;   /* slate-100 #f1f5f9 */
+    --c-text-muted:    148 163 184;   /* slate-400 #94a3b8 */
+    --c-primary:        96 165 250;   /* blue-400  #60a5fa */
+    --c-accent:          0 102 255;   /* brand     #0066ff */
+    --c-on-accent:     219 234 254;   /* blue-100  #dbeafe */
+    --c-success:        16 185 129;   /* emerald-500 #10b981 */
+    --c-success-bg:      6  78  59;   /* emerald-900 #064e3b */
+    --c-success-text:  167 243 208;   /* emerald-200 #a7f3d0 */
+    --c-error:         252 165 165;   /* red-300   #fca5a5 */
+    --c-error-bg:      127  29  29;   /* red-900   #7f1d1d */
+    --c-error-text:    254 202 202;   /* red-200   #fecaca */
+    --c-muted:          71  85 105;   /* slate-600 #475569 */
+    --c-border:         30  41  59;   /* slate-800 #1e293b */
+
+    /* shadcn / Radix compatibility */
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
     --card: 222.2 84% 4.9%;
     --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --primary: 217.2 91.2% 59.8%;
@@ -53,9 +107,26 @@
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+  /* Smooth scrollbar in dark mode */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-border));
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--c-muted));
+  }
 }
 
-/* Material Symbols */
+/* ══════════════════════════════════════════════════
+   Material Symbols
+══════════════════════════════════════════════════ */
 .material-symbols-outlined {
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   display: inline-block;
@@ -72,26 +143,82 @@
   font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-/* NetLoom Design Effects */
+/* ══════════════════════════════════════════════════
+   NetLoom v2 Surface Effects
+══════════════════════════════════════════════════ */
+
+/* Glass panel: adapts to theme via CSS vars */
 .glass-panel {
-  background: linear-gradient(135deg, rgba(29, 28, 60, 0.8) 0%, rgba(17, 15, 47, 0.9) 100%);
+  background: linear-gradient(
+    135deg,
+    rgb(var(--c-card) / 0.85) 0%,
+    rgb(var(--c-base) / 0.92) 100%
+  );
   backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .glass-card {
-  background: rgba(29, 28, 60, 0.4);
+  background: rgb(var(--c-card) / 0.5);
   backdrop-filter: blur(12px);
-  border-top: 1px solid rgba(71, 69, 85, 0.15);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid rgb(var(--c-border) / 0.2);
 }
 
+/* Brand gradient: blue → lighter blue (replaces purple→neon) */
 .kinetic-gradient {
-  background: linear-gradient(135deg, #624af4 0%, #00FF41 100%);
+  background: linear-gradient(135deg, rgb(var(--c-accent)) 0%, rgb(var(--c-primary)) 100%);
+}
+
+.kinetic-gradient-subtle {
+  background: linear-gradient(135deg, rgb(var(--c-accent) / 0.12) 0%, rgb(var(--c-primary) / 0.08) 100%);
 }
 
 .kinetic-glow {
-  box-shadow: 0 0 40px -10px rgba(98, 74, 244, 0.3);
+  box-shadow: 0 0 32px -8px rgb(var(--c-accent) / 0.35);
 }
 
 .inner-glow {
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.06);
+}
+
+/* ══════════════════════════════════════════════════
+   Status Animations
+══════════════════════════════════════════════════ */
+
+/* Pulse for online status */
+@keyframes statusPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgb(var(--c-success) / 0.6);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgb(var(--c-success) / 0);
+  }
+}
+
+.status-pulse {
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+/* Traffic Light: green 3s → amber 3s (version mismatch indicator) */
+@keyframes trafficLight {
+  0%, 49.9% {
+    background-color: rgb(var(--c-success));
+    box-shadow: 0 0 6px rgb(var(--c-success) / 0.5);
+  }
+  50%, 99.9% {
+    background-color: #f59e0b;
+    box-shadow: 0 0 6px rgb(245 158 11 / 0.5);
+  }
+}
+
+/* ══════════════════════════════════════════════════
+   Layout transitions
+══════════════════════════════════════════════════ */
+.sidebar-transition {
+  transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.content-transition {
+  transition: margin-left 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }

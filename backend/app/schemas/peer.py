@@ -76,11 +76,13 @@ class PeerResponse(BaseModel):
     created_at: str
     updated_at: str
     revoked_at: str | None
+    is_online: bool = False
+    sync_status: str = "green"  # green, yellow, red
 
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_peer(cls, peer, db=None) -> "PeerResponse":
+    def from_orm_peer(cls, peer, db=None, wg_status=None, sync_status="green") -> "PeerResponse":
         remote = json.loads(peer.remote_subnets) if peer.remote_subnets else []
         group_ids: list[int] = []
         if db is not None:
@@ -89,6 +91,11 @@ class PeerResponse(BaseModel):
                 PeerGroupMember.peer_id == peer.id
             ).all()
             group_ids = [m.group_id for m in memberships]
+
+        is_online = False
+        if wg_status:
+            is_online = wg_status.is_online
+
         return cls(
             id=peer.id,
             name=peer.name,
@@ -107,6 +114,8 @@ class PeerResponse(BaseModel):
             created_at=peer.created_at.isoformat(),
             updated_at=peer.updated_at.isoformat(),
             revoked_at=peer.revoked_at.isoformat() if peer.revoked_at else None,
+            is_online=is_online,
+            sync_status=sync_status,
         )
 
 

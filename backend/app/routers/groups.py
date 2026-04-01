@@ -6,8 +6,19 @@ from app.dependencies import require_password_changed
 from app.models.user import User
 from app.schemas.group import AddMembersRequest, GroupMemberResponse, PeerGroupCreate, PeerGroupResponse, PeerGroupUpdate
 from app.services import group_service
+from app.services import wg_service
+from app.services.peer_service import _bump_config_changed
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
+
+
+def _apply_group_changes(db: Session) -> None:
+    _bump_config_changed(db)
+    db.commit()
+    try:
+        wg_service.apply_config(db)
+    except Exception:
+        pass
 
 
 @router.get("", response_model=list[PeerGroupResponse])
@@ -47,6 +58,7 @@ def create_group(
     _: User = Depends(require_password_changed),
 ):
     group = group_service.create_group(db, body)
+    _apply_group_changes(db)
     resp = PeerGroupResponse.model_validate(group)
     resp.member_count = 0
     return resp
@@ -63,6 +75,7 @@ def update_group(
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
     group = group_service.update_group(db, group, body)
+    _apply_group_changes(db)
     count = group_service.get_member_count(db, group_id)
     resp = PeerGroupResponse.model_validate(group)
     resp.member_count = count
@@ -79,6 +92,7 @@ def delete_group(
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
     group_service.delete_group(db, group)
+    _apply_group_changes(db)
 
 
 @router.post("/{group_id}/members", status_code=status.HTTP_200_OK)
@@ -92,6 +106,7 @@ def add_members(
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
     added = group_service.add_members(db, group_id, body.peer_ids)
+    _apply_group_changes(db)
     return {"added": added}
 
 
@@ -105,6 +120,7 @@ def remove_member(
     removed = group_service.remove_member(db, group_id, peer_id)
     if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+    _apply_group_changes(db)
 
 
 @router.get("/{group_id}/members", response_model=list[GroupMemberResponse])

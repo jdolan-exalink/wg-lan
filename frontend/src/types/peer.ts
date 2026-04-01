@@ -1,6 +1,7 @@
 export type PeerType = "roadwarrior" | "branch_office" | "server";
 export type DeviceType = "laptop" | "ios" | "android" | "router" | "server";
 export type TunnelMode = "full" | "split";
+export type SyncStatus = "green" | "yellow" | "red";
 
 export interface Peer {
   id: number;
@@ -20,6 +21,8 @@ export interface Peer {
   created_at: string;
   updated_at: string;
   revoked_at: string | null;
+  is_online: boolean;
+  sync_status: SyncStatus;
 }
 
 export interface PeerStatus {
@@ -59,4 +62,14 @@ export interface PermissionSummary {
   group_policies: Array<{ zone_id: number; zone_name: string; action: string; source: string; group_id: number }>;
   overrides: Array<{ zone_id: number; zone_name: string; action: string; source: string; reason: string | null }>;
   final_cidrs: string[];
+}
+
+export interface PeerSyncStatus {
+  peer_id: number;
+  peer_name: string;
+  sync_status: SyncStatus;
+  sync_message: string;
+  is_online: boolean;
+  last_config_downloaded_at: string | null;
+  last_config_changed_at: string | null;
 }

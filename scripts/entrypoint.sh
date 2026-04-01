@@ -3,6 +3,18 @@ set -e
 
 echo "==> NetLoom starting..."
 
+# Validate required environment variables
+REQUIRED_VARS="NETLOOM_SECRET_KEY NETLOOM_ADMIN_PASSWORD NETLOOM_SERVER_ENDPOINT NETLOOM_SERVER_PORT NETLOOM_SUBNET"
+missing=""
+for var in $REQUIRED_VARS; do
+    [ -z "${!var}" ] && missing="$missing\n  - $var"
+done
+if [ -n "$missing" ]; then
+    echo "ERROR: Missing required environment variables:$missing"
+    echo "       Create a .env file based on .env.example before deploying."
+    exit 1
+fi
+
 # Create directories
 mkdir -p /app/data /etc/wireguard
 
@@ -60,5 +72,5 @@ sysctl -w net.ipv4.conf.wg0.src_valid_mark=1 2>/dev/null || true
 
 echo "    IP forwarding enabled"
 
-echo "==> Starting NetLoom dashboard on :7777"
-exec uvicorn app.main:app --host 0.0.0.0 --port 7777 --workers 1
+echo "==> Starting NetLoom dashboard on ${NETLOOM_HOST:-0.0.0.0}:${NETLOOM_PORT:-7777}"
+exec uvicorn app.main:app --host "${NETLOOM_HOST:-0.0.0.0}" --port "${NETLOOM_PORT:-7777}" --workers 1

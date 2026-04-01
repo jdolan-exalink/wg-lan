@@ -13,8 +13,30 @@ from app.schemas.network import (
     NetworkPeersUpdate,
 )
 from app.services import network_service
+from app.services.peer_service import _bump_config_changed
 
 router = APIRouter(prefix="/api/networks", tags=["networks"])
+
+
+def _apply_network_changes(db):
+    """Bump config changed and apply WireGuard config after network changes."""
+    _bump_config_changed(db)
+    db.commit()
+    try:
+        from app.services import wg_service
+        wg_service.apply_config(db)
+    except Exception:
+        pass
+
+
+@router.post("/apply", status_code=status.HTTP_200_OK)
+def apply_changes(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Apply pending network changes to WireGuard config."""
+    _apply_network_changes(db)
+    return {"status": "applied"}
 
 
 @router.get("", response_model=list[NetworkResponse])
@@ -49,7 +71,9 @@ def create_network(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Subnet overlaps with existing network '{conflicting}'",
         )
-    return network_service.create_network(db, body)
+    result = network_service.create_network(db, body)
+    _apply_network_changes(db)
+    return result
 
 
 @router.patch("/{network_id}", response_model=NetworkResponse)
@@ -62,7 +86,9 @@ def update_network(
     network = network_service.get_network(db, network_id)
     if not network:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
-    return network_service.update_network(db, network, body)
+    result = network_service.update_network(db, network, body)
+    _apply_network_changes(db)
+    return result
 
 
 @router.delete("/{network_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -75,6 +101,7 @@ def delete_network(
     if not network:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
     network_service.delete_network(db, network)
+    _apply_network_changes(db)
 
 
 @router.post("/{network_id}/peers", response_model=NetworkResponse)
@@ -88,7 +115,25 @@ def assign_peers(
     network = network_service.get_network(db, network_id)
     if not network:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
-    return network_service.assign_peers_to_network(db, network, body.peer_ids)
+    result = network_service.assign_peers_to_network(db, network, body.peer_ids)
+    _apply_network_changes(db)
+    return result
+
+
+@router.post("/{network_id}/peers/{peer_id}", response_model=NetworkResponse)
+def add_peer(
+    network_id: int,
+    peer_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Add a single peer to a network."""
+    network = network_service.get_network(db, network_id)
+    if not network:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
+    result = network_service.add_peer_to_network(db, network, peer_id)
+    _apply_network_changes(db)
+    return result
 
 
 @router.delete("/{network_id}/peers/{peer_id}", response_model=NetworkResponse)
@@ -102,7 +147,9 @@ def remove_peer(
     network = network_service.get_network(db, network_id)
     if not network:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
-    return network_service.remove_peer_from_network(db, network, peer_id)
+    result = network_service.remove_peer_from_network(db, network, peer_id)
+    _apply_network_changes(db)
+    return result
 
 
 @router.post("/check-conflict", response_model=SubnetConflictResponse)

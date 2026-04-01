@@ -26,7 +26,7 @@ import ipaddress
 from sqlalchemy.orm import Session
 
 from app.models.group import PeerGroupMember, Policy
-from app.models.peer import Peer, PeerOverride
+from app.models.peer import Peer, PeerNetworkAccess, PeerOverride
 from app.models.network import Network
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,12 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
 
     # Step 2: Collect peer-level overrides (always win)
     overrides = db.query(PeerOverride).filter(PeerOverride.peer_id == peer_id).all()
+    direct_allow_networks = {
+        row[0]
+        for row in db.query(PeerNetworkAccess.network_id).filter(
+            PeerNetworkAccess.peer_id == peer_id
+        ).all()
+    }
     override_allow_networks: set[int] = set()
     override_deny_networks: set[int] = set()
 
@@ -58,14 +64,19 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
             override_deny_networks.add(o.network_id)
 
     # Step 3: If peer has NO groups and NO overrides → allow all networks
-    if not group_ids and not override_allow_networks and not override_deny_networks:
+    if (
+        not group_ids
+        and not direct_allow_networks
+        and not override_allow_networks
+        and not override_deny_networks
+    ):
         all_networks = db.query(Network).all()
         cidrs = sorted({n.subnet for n in all_networks})
         logger.info(f"Peer {peer_id}: ALLOW-ALL mode, CIDRs: {cidrs}")
         return cidrs
 
     # Step 4: Collect group-level policies
-    allowed_network_ids: set[int] = set()
+    allowed_network_ids: set[int] = set(direct_allow_networks)
     blocked_network_ids: set[int] = set()
 
     if group_ids:
@@ -96,13 +107,14 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
                 blocked_network_ids.update(source_member_networks)
 
     # Step 5: Apply precedence
-    all_network_ids = allowed_network_ids | blocked_network_ids | override_allow_networks | override_deny_networks
+    manual_allow_networks = direct_allow_networks | override_allow_networks
+    all_network_ids = allowed_network_ids | blocked_network_ids | manual_allow_networks | override_deny_networks
     
     final_network_ids: set[int] = set()
     for network_id in all_network_ids:
         if network_id in override_deny_networks:
             continue
-        if network_id in override_allow_networks:
+        if network_id in manual_allow_networks:
             final_network_ids.add(network_id)
             continue
         if network_id in blocked_network_ids:
@@ -133,20 +145,26 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
 
 
 def _get_group_networks(db: Session, group_id: int) -> set[int]:
-    """Get all network IDs associated with a group's members."""
+    """Get all network IDs associated with a group's members, plus networks with no owner."""
     member_peer_ids = db.query(PeerGroupMember.peer_id).filter(
         PeerGroupMember.group_id == group_id
     ).all()
     member_peer_ids = [row[0] for row in member_peer_ids]
     
-    if not member_peer_ids:
-        return set()
+    network_ids: set[int] = set()
     
-    network_ids = db.query(Network.id).filter(
-        Network.peer_id.in_(member_peer_ids)
+    if member_peer_ids:
+        owned = db.query(Network.id).filter(
+            Network.peer_id.in_(member_peer_ids)
+        ).all()
+        network_ids.update(row[0] for row in owned)
+    
+    orphaned = db.query(Network.id).filter(
+        Network.peer_id.is_(None)
     ).all()
+    network_ids.update(row[0] for row in orphaned)
     
-    return {row[0] for row in network_ids}
+    return network_ids
 
 
 def compile_peer_routes(db: Session, peer_id: int) -> list[str]:

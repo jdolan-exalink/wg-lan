@@ -23,16 +23,59 @@ import { formatHandshake, formatBytes } from "@/lib/utils";
 import {
   Plus, Download, QrCode, RotateCcw, Trash2,
   Laptop, Smartphone, Router, Server, ChevronLeft, ChevronRight,
-  Shield,
+  Building2, User,
 } from "lucide-react";
 import type { Peer } from "@/types/peer";
 
-function QrCodeCard({ peer, onClose }: { peer: Peer; onClose: () => void }) {
+function PeerStatusDot({ peer }: { peer: Peer }) {
+  if (peer.is_system) {
+    return (
+      <div className="flex items-center justify-center">
+        <span
+          className="h-3 w-3 rounded-full bg-green-500 inline-block"
+          title="Servidor WireGuard online"
+          style={{ animation: "statusPulse 2s ease-in-out infinite" }}
+        />
+      </div>
+    );
+  }
+
+  const isOnline = peer.is_online;
+  const syncStatus = peer.sync_status;
+
+  if (isOnline && syncStatus === "yellow") {
+    return (
+      <div className="flex items-center justify-center">
+        <span
+          className="h-3 w-3 rounded-full inline-block"
+          title="Conectado con versión anterior"
+          style={{ animation: "trafficLight 6s ease-in-out infinite" }}
+        />
+      </div>
+    );
+  }
+
+  const color = isOnline ? "bg-green-500" : "bg-red-500";
+  const title = isOnline ? "Conectado" : "Desconectado";
+
+  return (
+    <div className="flex items-center justify-center">
+      <span
+        className={`h-3 w-3 rounded-full ${color} inline-block`}
+        title={title}
+        style={{ animation: "statusPulse 2s ease-in-out infinite" }}
+      />
+    </div>
+  );
+}
+
+function QrCodeDialog({ peer, open, onOpenChange }: { peer: Peer | null; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [qrSrc, setQrSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!peer || !open) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -60,32 +103,36 @@ function QrCodeCard({ peer, onClose }: { peer: Peer; onClose: () => void }) {
       });
 
     return () => { cancelled = true; };
-  }, [peer.id]);
+  }, [peer?.id, open]);
+
+  if (!peer) return null;
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-sm">QR Code — {peer.name}</CardTitle>
-        <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
-      </CardHeader>
-      <CardContent className="flex flex-col items-center gap-3">
-        {loading && <p className="text-sm text-muted-foreground">Loading QR code...</p>}
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        {qrSrc && <img src={qrSrc} alt="QR code" className="max-w-xs border rounded" />}
-        <div className="flex gap-2">
-          <a href={peersApi.configUrl(peer.id)} download={`${peer.name}.conf`}>
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-2" /> Standard (.conf)
-            </Button>
-          </a>
-          <a href={peersApi.mikrotikConfigUrl(peer.id)} download={`${peer.name}-mikrotik.txt`}>
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-2" /> MikroTik (.txt)
-            </Button>
-          </a>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>QR Code — {peer.name}</DialogTitle>
+          <DialogDescription>Scan with the WireGuard app to configure this peer.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col items-center gap-4 py-4">
+          {loading && <p className="text-sm text-muted-foreground">Loading QR code...</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          {qrSrc && <img src={qrSrc} alt="QR code" className="max-w-xs border rounded" />}
+          <div className="flex gap-2">
+            <a href={peersApi.configUrl(peer.id)} download={`${peer.name}.conf`}>
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-2" /> Standard (.conf)
+              </Button>
+            </a>
+            <a href={peersApi.mikrotikConfigUrl(peer.id)} download={`${peer.name}-mikrotik.txt`}>
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-2" /> MikroTik (.txt)
+              </Button>
+            </a>
+          </div>
         </div>
-      </CardContent>
-    </Card>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -185,11 +232,11 @@ export function PeersPage() {
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{peers.length} peer{peers.length !== 1 ? "s" : ""} configured</p>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setWizard("branch_office")}>
-            <Plus className="h-4 w-4" /> Branch Office
+          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-0" onClick={() => setWizard("roadwarrior")}>
+            <User className="h-4 w-4" /> RoadWarrior
           </Button>
-          <Button size="sm" onClick={() => setWizard("roadwarrior")}>
-            <Plus className="h-4 w-4" /> RoadWarrior
+          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-0" onClick={() => setWizard("branch_office")}>
+            <Building2 className="h-4 w-4" /> BOVPN
           </Button>
         </div>
       </div>
@@ -202,7 +249,7 @@ export function PeersPage() {
       )}
 
       {qrPeer && (
-        <QrCodeCard peer={qrPeer} onClose={() => setQrPeer(null)} />
+        <QrCodeDialog peer={qrPeer} open={!!qrPeer} onOpenChange={(open) => !open && setQrPeer(null)} />
       )}
 
       <Card>
@@ -210,20 +257,24 @@ export function PeersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/40">
+                <th className="text-left px-4 py-2 font-medium w-10"></th>
                 <th className="text-left px-4 py-2 font-medium">Name</th>
                 <th className="text-left px-4 py-2 font-medium">Type</th>
                 <th className="text-left px-4 py-2 font-medium">VPN IP</th>
                 <th className="text-left px-4 py-2 font-medium">Shared LAN</th>
                 <th className="text-left px-4 py-2 font-medium">Tunnel</th>
-                <th className="text-left px-4 py-2 font-medium">Status</th>
+                <th className="text-left px-4 py-2 font-medium w-16">Power</th>
                 <th className="text-right px-4 py-2 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {peers.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No peers yet — use a wizard above</td></tr>
-              ) : peers.map((p) => (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No peers yet — use a wizard above</td></tr>
+              ) : [...peers].sort((a, b) => (a.is_system ? -1 : b.is_system ? 1 : 0)).map((p) => (
                 <tr key={p.id} className="border-b last:border-0 hover:bg-muted/20">
+                  <td className="px-4 py-2">
+                    <PeerStatusDot peer={p} />
+                  </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2">
                       {p.device_type && deviceIcons[p.device_type]}
@@ -247,13 +298,11 @@ export function PeersPage() {
                     <Badge variant={p.tunnel_mode === "full" ? "default" : "outline"}>{p.tunnel_mode}</Badge>
                   </td>
                   <td className="px-4 py-2">
-                    {p.is_system ? (
-                      <Badge variant="secondary" className="text-[10px]">Always On</Badge>
-                    ) : (
+                    {!p.is_system && (
                       <Switch
                         checked={p.is_enabled}
                         onCheckedChange={() => toggle.mutate(p.id)}
-                        disabled={toggle.isPending}
+                        className={p.is_enabled ? "data-[state=checked]:bg-green-500" : "data-[state=unchecked]:bg-gray-500"}
                       />
                     )}
                   </td>
@@ -268,7 +317,7 @@ export function PeersPage() {
                           setSelectedGroupIds(p.group_ids || []);
                         }}
                       >
-                        <Shield className="h-4 w-4" />
+                        <span className="material-symbols-outlined text-[18px]">group</span>
                       </Button>
                       {!p.is_system && (
                         <>
@@ -277,14 +326,18 @@ export function PeersPage() {
                               <Download className="h-4 w-4" />
                             </Button>
                           </a>
-                          <a href={peersApi.mikrotikConfigUrl(p.id)} download={`${p.name}-mikrotik.txt`}>
-                            <Button variant="ghost" size="icon" title="Download MikroTik RouterOS commands">
-                              <Router className="h-4 w-4" />
+                          {p.peer_type !== "roadwarrior" && (
+                            <a href={peersApi.mikrotikConfigUrl(p.id)} download={`${p.name}-mikrotik.txt`}>
+                              <Button variant="ghost" size="icon" title="Download MikroTik RouterOS commands">
+                                <Router className="h-4 w-4" />
+                              </Button>
+                            </a>
+                          )}
+                          {p.peer_type !== "branch_office" && (
+                            <Button variant="ghost" size="icon" title="Show QR" onClick={() => setQrPeer(p)}>
+                              <QrCode className="h-4 w-4" />
                             </Button>
-                          </a>
-                          <Button variant="ghost" size="icon" title="Show QR" onClick={() => setQrPeer(p)}>
-                            <QrCode className="h-4 w-4" />
-                          </Button>
+                          )}
                           <Button variant="ghost" size="icon" title="Regenerate keys" onClick={() => regenKeys.mutate(p.id)}>
                             <RotateCcw className="h-4 w-4" />
                           </Button>
@@ -391,6 +444,7 @@ export function PeersPage() {
 function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const [step, setStep] = useState(0);
   const [createdPeer, setCreatedPeer] = useState<Peer | null>(null);
+  const [showQr, setShowQr] = useState(false);
 
   const { data: networks = [] } = useQuery({ queryKey: ["networks"], queryFn: () => networksApi.list().then((r) => r.data) });
   const { data: groups = [] } = useQuery({ queryKey: ["groups"], queryFn: () => groupsApi.list().then((r) => r.data) });
@@ -520,7 +574,7 @@ function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel:
                 <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.txt`}>
                   <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik (.txt)</Button>
                 </a>
-                <Button size="sm" variant="outline" onClick={() => window.open(peersApi.qrcodeUrl(createdPeer.id))}>
+                <Button size="sm" variant="outline" onClick={() => setShowQr(true)}>
                   <QrCode className="h-4 w-4" /> View QR
                 </Button>
                 <Button size="sm" onClick={onDone}>Done</Button>
@@ -529,6 +583,7 @@ function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel:
           )
         )}
       </CardContent>
+      <QrCodeDialog peer={createdPeer} open={showQr} onOpenChange={setShowQr} />
     </Card>
   );
 }

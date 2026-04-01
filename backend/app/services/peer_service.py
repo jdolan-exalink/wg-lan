@@ -1,9 +1,10 @@
 import json
+import logging
 
 from sqlalchemy.orm import Session
 
 from app.models.peer import Peer, PeerOverride
-from app.models.group import PeerGroupMember
+from app.models.group import PeerGroup, PeerGroupMember, Policy
 from app.models.network import Network
 from app.schemas.peer import BranchOfficeCreate, PeerOverrideCreate, PeerUpdate, RoadWarriorCreate
 from app.services import wg_service
@@ -11,6 +12,8 @@ from app.services.policy_compiler import compile_allowed_cidrs
 from app.utils.ip_utils import get_next_available_ip
 from app.utils.wg_keygen import safe_generate_keypair
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _get_used_ips(db: Session, exclude_peer_id: int | None = None) -> list[str]:
@@ -23,6 +26,87 @@ def _get_used_ips(db: Session, exclude_peer_id: int | None = None) -> list[str]:
 def _assign_groups(db: Session, peer_id: int, group_ids: list[int]) -> None:
     for group_id in group_ids:
         db.add(PeerGroupMember(peer_id=peer_id, group_id=group_id))
+
+
+def _ensure_all_group(db: Session) -> int:
+    """Ensure the 'All' group exists and return its ID."""
+    group = db.query(PeerGroup).filter(PeerGroup.name == "All").first()
+    if group:
+        return group.id
+    group = PeerGroup(name="All", description="All peers — default access")
+    db.add(group)
+    db.flush()
+    return group.id
+
+
+def _ensure_all_to_all_policy(db: Session, group_id: int) -> None:
+    """Ensure an allow-both policy exists from the group to itself."""
+    existing = db.query(Policy).filter(
+        Policy.source_group_id == group_id,
+        Policy.dest_group_id == group_id,
+        Policy.direction == "both",
+    ).first()
+    if not existing:
+        db.add(Policy(
+            source_group_id=group_id,
+            dest_group_id=group_id,
+            direction="both",
+            action="allow",
+        ))
+
+
+def _create_branch_group_and_policies(db: Session, peer: Peer) -> int:
+    """
+    When a branch office is created, auto-create a group named '{name}-lan'
+    and set up all-to-all policies with the 'All' group.
+    Returns the new group ID.
+    """
+    group_name = f"{peer.name}-lan"
+    
+    existing = db.query(PeerGroup).filter(PeerGroup.name == group_name).first()
+    if existing:
+        db.add(PeerGroupMember(peer_id=peer.id, group_id=existing.id))
+        return existing.id
+    
+    group = PeerGroup(name=group_name, description=f"Auto-created for branch office '{peer.name}'")
+    db.add(group)
+    db.flush()
+    
+    db.add(PeerGroupMember(peer_id=peer.id, group_id=group.id))
+    
+    all_group_id = _ensure_all_group(db)
+    
+    _ensure_all_to_all_policy(db, all_group_id)
+    
+    db.add(Policy(
+        source_group_id=all_group_id,
+        dest_group_id=group.id,
+        direction="both",
+        action="allow",
+    ))
+    db.add(Policy(
+        source_group_id=group.id,
+        dest_group_id=all_group_id,
+        direction="both",
+        action="allow",
+    ))
+    db.add(Policy(
+        source_group_id=group.id,
+        dest_group_id=group.id,
+        direction="both",
+        action="allow",
+    ))
+    
+    return group.id
+
+
+def _bump_config_changed(db: Session) -> None:
+    """Update last_config_changed_at to signal all peers are out of sync."""
+    from datetime import datetime, timezone
+    from app.models.server_config import ServerConfig
+    cfg = db.query(ServerConfig).first()
+    if cfg:
+        cfg.last_config_changed_at = datetime.now(timezone.utc)
 
 
 def _create_peer_networks(db: Session, peer: Peer, remote_subnets: list[str] | None = None) -> None:
@@ -52,13 +136,12 @@ def _create_peer_networks(db: Session, peer: Peer, remote_subnets: list[str] | N
 
 
 def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) -> Peer:
-    # Validate network_id if provided (optional - only for LAN association)
-    if data.network_id:
-        network = db.query(Network).filter(Network.id == data.network_id).first()
+    network_id = data.network_id or None
+    if network_id:
+        network = db.query(Network).filter(Network.id == network_id).first()
         if not network:
-            raise ValueError(f"Network {data.network_id} not found")
+            raise ValueError(f"Network {network_id} not found")
 
-    # Assign VPN IP from global settings subnet
     used_ips = _get_used_ips(db)
     assigned_ip = get_next_available_ip(settings.subnet, used_ips)
     private_key, public_key = safe_generate_keypair()
@@ -70,7 +153,7 @@ def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) ->
         private_key=private_key,
         public_key=public_key,
         assigned_ip=assigned_ip,
-        network_id=data.network_id,
+        network_id=network_id,
         tunnel_mode=data.tunnel_mode,
         dns=data.dns,
         persistent_keepalive=data.persistent_keepalive,
@@ -78,15 +161,20 @@ def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) ->
         created_by=created_by,
     )
     db.add(peer)
-    db.flush()  # Get peer.id
+    db.flush()
 
-    _assign_groups(db, peer.id, data.group_ids)
+    group_ids = list(data.group_ids) if data.group_ids else []
+    if not group_ids:
+        all_group_id = _ensure_all_group(db)
+        group_ids.append(all_group_id)
+        _ensure_all_to_all_policy(db, all_group_id)
+
+    _assign_groups(db, peer.id, group_ids)
     _create_peer_networks(db, peer)
     
     db.commit()
     db.refresh(peer)
 
-    # Apply WireGuard config (best-effort — doesn't fail the request)
     try:
         wg_service.apply_config(db)
     except Exception:
@@ -96,13 +184,12 @@ def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) ->
 
 
 def create_branch_office(db: Session, data: BranchOfficeCreate, created_by: int) -> Peer:
-    # Validate network_id if provided (optional - only for LAN association)
-    if data.network_id:
-        network = db.query(Network).filter(Network.id == data.network_id).first()
+    network_id = data.network_id or None
+    if network_id:
+        network = db.query(Network).filter(Network.id == network_id).first()
         if not network:
-            raise ValueError(f"Network {data.network_id} not found")
+            raise ValueError(f"Network {network_id} not found")
 
-    # Assign VPN IP from global settings subnet
     used_ips = _get_used_ips(db)
     assigned_ip = get_next_available_ip(settings.subnet, used_ips)
     private_key, public_key = safe_generate_keypair()
@@ -114,8 +201,8 @@ def create_branch_office(db: Session, data: BranchOfficeCreate, created_by: int)
         private_key=private_key,
         public_key=public_key,
         assigned_ip=assigned_ip,
-        network_id=data.network_id,
-        tunnel_mode="split",  # Branch offices always split-tunnel
+        network_id=network_id,
+        tunnel_mode="split",
         remote_subnets=json.dumps(data.remote_subnets),
         dns=data.dns,
         persistent_keepalive=data.persistent_keepalive,
@@ -125,13 +212,19 @@ def create_branch_office(db: Session, data: BranchOfficeCreate, created_by: int)
     db.add(peer)
     db.flush()
 
-    _assign_groups(db, peer.id, data.group_ids)
-    
-    # Create networks for this branch office's remote subnets
     _create_peer_networks(db, peer, data.remote_subnets)
+    
+    group_ids = list(data.group_ids) if data.group_ids else []
+    if not group_ids:
+        _create_branch_group_and_policies(db, peer)
+    else:
+        _assign_groups(db, peer.id, group_ids)
     
     db.commit()
     db.refresh(peer)
+
+    _bump_config_changed(db)
+    db.commit()
 
     try:
         wg_service.apply_config(db)
@@ -192,6 +285,8 @@ def update_peer(db: Session, peer: Peer, data: PeerUpdate) -> Peer:
     
     db.commit()
     db.refresh(peer)
+    _bump_config_changed(db)
+    db.commit()
     try:
         wg_service.apply_config(db)
     except Exception:

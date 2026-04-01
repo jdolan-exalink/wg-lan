@@ -19,3 +19,4 @@ class Network(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     peer: Mapped["Peer"] = relationship("Peer", foreign_keys=[peer_id], back_populates="networks_owned")
+    peer_access: Mapped[list["PeerNetworkAccess"]] = relationship("PeerNetworkAccess", back_populates="network")

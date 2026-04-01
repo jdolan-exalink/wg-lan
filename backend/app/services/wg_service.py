@@ -56,13 +56,20 @@ def apply_config(db: Session) -> None:
 
     If the interface doesn't exist yet, uses wg-quick up to create it first.
     """
+    from datetime import datetime, timezone
     from app.models.server_config import ServerConfig
 
     server_cfg = db.query(ServerConfig).first()
     if not server_cfg:
         return
 
-    peers = db.query(Peer).filter(Peer.is_enabled == True).all()
+    server_cfg.last_config_changed_at = datetime.now(timezone.utc)
+    db.commit()
+
+    peers = db.query(Peer).filter(
+        Peer.is_enabled == True,
+        Peer.peer_type != "server",
+    ).all()
     peer_pairs = [(p, build_server_allowed_ips(p)) for p in peers]
 
     config_str = generate_full_server_config(server_cfg, peer_pairs)

@@ -15,7 +15,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Users } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Plus, Trash2, Users, ChevronDown, ChevronRight, Info, ArrowRight, Router, Laptop, Smartphone, Server, X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -26,11 +33,22 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
+const peerTypeIcons: Record<string, React.ReactNode> = {
+  roadwarrior: <Laptop className="h-3 w-3" />,
+  branch_office: <Router className="h-3 w-3" />,
+  laptop: <Laptop className="h-3 w-3" />,
+  ios: <Smartphone className="h-3 w-3" />,
+  android: <Smartphone className="h-3 w-3" />,
+  router: <Router className="h-3 w-3" />,
+  server: <Server className="h-3 w-3" />,
+};
+
 export function GroupsPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null);
   const [addPeersGroupId, setAddPeersGroupId] = useState<number | null>(null);
-  const [selectedPeerIds, setSelectedPeerIds] = useState<number[]>([]);
+  const [selectedPeerId, setSelectedPeerId] = useState<number | null>(null);
 
   const { data: groups = [] } = useQuery({
     queryKey: ["groups"],
@@ -40,16 +58,13 @@ export function GroupsPage() {
   const { data: peers = [] } = useQuery({
     queryKey: ["peers"],
     queryFn: () => peersApi.list().then((r) => r.data),
-    enabled: addPeersGroupId !== null,
   });
 
   const { data: existingMembers = [] } = useQuery({
-    queryKey: ["group-members", addPeersGroupId],
-    queryFn: () => addPeersGroupId ? groupsApi.getMembers(addPeersGroupId).then((r) => r.data) : [],
-    enabled: addPeersGroupId !== null,
+    queryKey: ["group-members", expandedGroupId],
+    queryFn: () => expandedGroupId ? groupsApi.getMembers(expandedGroupId).then((r) => r.data) : [],
+    enabled: expandedGroupId !== null,
   });
-
-  const existingMemberIds = new Set(existingMembers.map((m) => m.peer_id));
 
   const create = useMutation({
     mutationFn: (data: FormData) => groupsApi.create(data),
@@ -61,15 +76,14 @@ export function GroupsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["groups"] }),
   });
 
-  const addMembers = useMutation({
+  const addMember = useMutation({
     mutationFn: ({ groupId, peerIds }: { groupId: number; peerIds: number[] }) =>
       groupsApi.addMembers(groupId, peerIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["groups"] });
-      qc.invalidateQueries({ queryKey: ["peers"] });
       qc.invalidateQueries({ queryKey: ["group-members"] });
       setAddPeersGroupId(null);
-      setSelectedPeerIds([]);
+      setSelectedPeerId(null);
     },
   });
 
@@ -78,7 +92,6 @@ export function GroupsPage() {
       groupsApi.removeMember(groupId, peerId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["groups"] });
-      qc.invalidateQueries({ queryKey: ["peers"] });
       qc.invalidateQueries({ queryKey: ["group-members"] });
     },
   });
@@ -87,136 +100,240 @@ export function GroupsPage() {
     resolver: zodResolver(schema),
   });
 
+  const existingMemberIds = new Set(existingMembers.map((m) => m.peer_id));
+  const availablePeers = peers.filter((p) => !p.is_system && !existingMemberIds.has(p.id));
+
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-6">
+      {/* Explanation Card */}
+      <Card className="bg-surface-container-low border-primary/10">
+        <CardContent className="pt-6">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-lg bg-primary/10 mt-0.5">
+              <Info className="h-5 w-5 text-primary" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="font-headline font-bold text-on-surface">Grupos de acceso</h3>
+              <p className="text-sm text-muted-foreground">
+                Un grupo es un perfil de acceso: agrupa peers que comparten las mismas reglas de red.
+                Las políticas se definen entre grupos (origen → destino = permitir/denegar), no entre peers individuales.
+              </p>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Users className="h-3.5 w-3.5" />
+                <span>Grupo</span>
+                <ArrowRight className="h-3 w-3" />
+                <span>Contiene peers</span>
+                <ArrowRight className="h-3 w-3" />
+                <span>Políticas definen acceso a redes de otros grupos</span>
+              </div>
+              <p className="text-xs text-muted-foreground/70">
+                Un peer puede pertenecer a múltiples grupos. Si un peer no tiene grupo, tiene acceso a todas las redes.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Create Group Form */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Access profiles — assign peers to groups to inherit policies</p>
+        <p className="text-sm text-muted-foreground">{groups.length} grupo{groups.length !== 1 ? "s" : ""} configurado{groups.length !== 1 ? "s" : ""}</p>
         <Button size="sm" onClick={() => setShowForm(!showForm)}>
-          <Plus className="h-4 w-4" /> Add Group
+          <Plus className="h-4 w-4" /> Crear grupo
         </Button>
       </div>
 
       {showForm && (
         <Card>
-          <CardHeader><CardTitle className="text-sm">New Group</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">Nuevo grupo</CardTitle></CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit((d) => create.mutateAsync(d).then(() => reset()))} className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Name</Label>
-                <Input placeholder="rw_planta_ventas" {...register("name")} />
+                <Label>Nombre</Label>
+                <Input placeholder="soporte" {...register("name")} />
                 {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
               </div>
               <div className="space-y-1">
-                <Label>Description</Label>
-                <Input placeholder="Optional" {...register("description")} />
+                <Label>Descripción</Label>
+                <Input placeholder="Opcional" {...register("description")} />
               </div>
               <div className="col-span-2 flex gap-2">
-                <Button type="submit" size="sm" disabled={isSubmitting}>Save</Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancel</Button>
+                <Button type="submit" size="sm" disabled={isSubmitting}>Guardar</Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancelar</Button>
               </div>
             </form>
           </CardContent>
         </Card>
       )}
 
+      {/* Groups List */}
       <Card>
         <CardContent className="p-0">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/40">
-                <th className="text-left px-4 py-2 font-medium">Name</th>
-                <th className="text-left px-4 py-2 font-medium">Description</th>
-                <th className="text-left px-4 py-2 font-medium">Members</th>
+                <th className="text-left px-4 py-2 font-medium w-10"></th>
+                <th className="text-left px-4 py-2 font-medium">Nombre</th>
+                <th className="text-left px-4 py-2 font-medium">Descripción</th>
+                <th className="text-left px-4 py-2 font-medium">Miembros</th>
                 <th className="px-4 py-2" />
               </tr>
             </thead>
             <tbody>
               {groups.length === 0 ? (
-                <tr><td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">No groups yet</td></tr>
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                  <div className="flex flex-col items-center gap-2">
+                    <Users className="h-6 w-6 text-muted-foreground/30" />
+                    <p>No hay grupos configurados</p>
+                    <p className="text-xs text-muted-foreground/50">Creá un grupo para empezar a definir políticas de acceso</p>
+                  </div>
+                </td></tr>
               ) : groups.map((g) => (
-                <tr key={g.id} className="border-b last:border-0 hover:bg-muted/20">
-                  <td className="px-4 py-2 font-medium font-mono text-xs">{g.name}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{g.description ?? "—"}</td>
-                  <td className="px-4 py-2">
-                    <Badge variant="secondary">{g.member_count} peer{g.member_count !== 1 ? "s" : ""}</Badge>
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Add peers"
-                        onClick={() => {
-                          setAddPeersGroupId(g.id);
-                          setSelectedPeerIds([]);
-                        }}
-                      >
-                        <Users className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => del.mutate(g.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
+                <GroupRow
+                  key={g.id}
+                  group={g}
+                  expanded={expandedGroupId === g.id}
+                  onToggle={() => setExpandedGroupId(expandedGroupId === g.id ? null : g.id)}
+                  members={expandedGroupId === g.id ? existingMembers : []}
+                  onAddPeers={() => { setAddPeersGroupId(g.id); setSelectedPeerId(null); }}
+                  onRemovePeer={(peerId) => removeMember.mutate({ groupId: g.id, peerId })}
+                  onDelete={() => del.mutate(g.id)}
+                />
               ))}
             </tbody>
           </table>
         </CardContent>
       </Card>
 
-      {/* Add Peers to Group Dialog */}
+      {/* Add Peers Dialog */}
       <Dialog open={addPeersGroupId !== null} onOpenChange={(open) => !open && setAddPeersGroupId(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Peers to Group</DialogTitle>
-            <DialogDescription>
-              Select peers to add to this group. Existing members are not shown.
-            </DialogDescription>
+            <DialogTitle>Agregar peer al grupo</DialogTitle>
+            <DialogDescription>Seleccioná el peer que querés agregar.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-4 max-h-64 overflow-y-auto">
-            {peers.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No peers available.</p>
+          <div className="py-4 space-y-2">
+            {availablePeers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No hay peers disponibles para agregar.</p>
             ) : (
-              peers.map((p) => (
-                <label key={p.id} className="flex items-center gap-3 p-2 rounded hover:bg-accent cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selectedPeerIds.includes(p.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedPeerIds((prev) => [...prev, p.id]);
-                      } else {
-                        setSelectedPeerIds((prev) => prev.filter((id) => id !== p.id));
-                      }
-                    }}
-                    className="h-4 w-4 rounded border-input"
-                  />
-                  <div>
-                    <span className="text-sm font-medium">{p.name}</span>
-                    <p className="text-xs text-muted-foreground">{p.assigned_ip} · {p.peer_type}</p>
-                  </div>
-                </label>
-              ))
+              <Select
+                value={selectedPeerId?.toString() ?? ""}
+                onValueChange={(v) => setSelectedPeerId(parseInt(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Elegir peer..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {availablePeers.map((p) => (
+                    <SelectItem key={p.id} value={p.id.toString()}>
+                      <div className="flex items-center gap-2">
+                        {peerTypeIcons[p.device_type ?? p.peer_type]}
+                        <span>{p.name}</span>
+                        <Badge variant="outline" className="text-[10px]">{p.peer_type}</Badge>
+                        <span className="text-xs font-mono text-muted-foreground">{p.assigned_ip}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddPeersGroupId(null)}>
+            <Button variant="outline" onClick={() => { setAddPeersGroupId(null); setSelectedPeerId(null); }}>
               Cancel
             </Button>
             <Button
               onClick={() => {
-                if (addPeersGroupId && selectedPeerIds.length > 0) {
-                  addMembers.mutate({ groupId: addPeersGroupId, peerIds: selectedPeerIds });
+                if (addPeersGroupId && selectedPeerId) {
+                  addMember.mutate({ groupId: addPeersGroupId, peerIds: [selectedPeerId] });
                 }
               }}
-              disabled={addMembers.isPending || selectedPeerIds.length === 0}
+              disabled={!selectedPeerId || addMember.isPending}
             >
-              {addMembers.isPending ? "Adding..." : `Add ${selectedPeerIds.length} Peer${selectedPeerIds.length !== 1 ? "s" : ""}`}
+              {addMember.isPending ? "Agregando..." : "Agregar"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function GroupRow({
+  group,
+  expanded,
+  onToggle,
+  members,
+  onAddPeers,
+  onRemovePeer,
+  onDelete,
+}: {
+  group: { id: number; name: string; description: string | null; member_count: number };
+  expanded: boolean;
+  onToggle: () => void;
+  members: Array<{ peer_id: number; peer_name: string; peer_type: string; assigned_ip: string }>;
+  onAddPeers: () => void;
+  onRemovePeer: (peerId: number) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <>
+      <tr className="border-b last:border-0 hover:bg-muted/20">
+        <td className="px-4 py-3">
+          <button onClick={onToggle} className="flex items-center gap-2 font-medium">
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </button>
+        </td>
+        <td className="px-4 py-3 font-medium font-mono text-xs">{group.name}</td>
+        <td className="px-4 py-3 text-muted-foreground">{group.description ?? "—"}</td>
+        <td className="px-4 py-3">
+          <Badge variant="secondary">{group.member_count} peer{group.member_count !== 1 ? "s" : ""}</Badge>
+        </td>
+        <td className="px-4 py-3 text-right">
+          <div className="flex items-center justify-end gap-1">
+            <Button variant="ghost" size="icon" onClick={onDelete} title="Eliminar grupo">
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="bg-muted/10">
+          <td colSpan={5} className="px-4 py-3">
+            <div className="ml-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground font-medium">Miembros del grupo:</p>
+                <Button size="sm" variant="outline" onClick={onAddPeers}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Agregar peer
+                </Button>
+              </div>
+              {members.length === 0 ? (
+                <p className="text-xs text-muted-foreground/50">Sin miembros — agregá peers para definir políticas de acceso</p>
+              ) : (
+                <div className="space-y-1">
+                  {members.map((m) => (
+                    <div key={m.peer_id} className="flex items-center gap-3 text-xs py-1 px-2 rounded hover:bg-muted/30">
+                      <span className="text-muted-foreground">
+                        {peerTypeIcons[m.peer_type] ?? <Laptop className="h-3 w-3" />}
+                      </span>
+                      <span className="font-medium">{m.peer_name}</span>
+                      <Badge variant="outline" className="text-[10px]">{m.peer_type}</Badge>
+                      <span className="font-mono text-muted-foreground">{m.assigned_ip}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 ml-auto"
+                        onClick={() => onRemovePeer(m.peer_id)}
+                      >
+                        <X className="h-3 w-3 text-destructive" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

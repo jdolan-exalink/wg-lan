@@ -1,40 +1,18 @@
-import { useAuth } from "@/contexts/AuthContext";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { Button } from "@/components/ui/button";
-import { useNavigate } from "react-router-dom";
-
 interface HeaderProps {
   title: string;
 }
 
 export function Header({ title }: HeaderProps) {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-
-  const handleLogout = async () => {
-    await logout();
-    navigate("/login");
-  };
-
   return (
-    <header className="sticky top-0 z-40 flex justify-between items-center h-16 px-8 bg-surface-dim/80 backdrop-blur-xl transition-all duration-300">
-      <div className="flex items-center gap-4">
-        <h2 className="font-headline font-bold text-lg text-on-surface">{title}</h2>
-        <div className="h-4 w-px bg-outline-variant/30" />
-        <p className="font-label text-xs text-tertiary">NODE-01</p>
-      </div>
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2">
-          <ThemeToggle />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleLogout}
-            className="text-outline hover:text-on-surface transition-colors"
-          >
-            <span className="material-symbols-outlined text-xl">logout</span>
-          </Button>
-        </div>
+    <header className="sticky top-0 z-40 flex items-center h-14 px-6 lg:px-8 bg-surface-dim/85 backdrop-blur-xl border-b border-outline-variant/10 transition-all duration-200">
+      <div className="flex items-center gap-3 min-w-0">
+        <h2 className="font-headline font-semibold text-[15px] text-on-surface leading-none truncate">
+          {title}
+        </h2>
+        <span className="h-3.5 w-px bg-outline-variant/30 flex-shrink-0" />
+        <span className="font-label text-[10px] uppercase tracking-widest text-outline px-2 py-1 rounded-md bg-surface-container-high/40 border border-outline-variant/15 flex-shrink-0">
+          NODE‑01
+        </span>
       </div>
     </header>
   );
