@@ -35,9 +35,9 @@ COPY --from=frontend-build /app/backend/static ./static
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Create data directory
-RUN mkdir -p /app/data /etc/wireguard
+# Create data and certs directories
+RUN mkdir -p /app/data /etc/wireguard /app/certs
 
-EXPOSE 7777
+EXPOSE 7777 7778
 
 ENTRYPOINT ["/entrypoint.sh"]

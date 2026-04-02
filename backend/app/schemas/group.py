@@ -29,3 +29,19 @@ class GroupMemberResponse(BaseModel):
     peer_name: str
     peer_type: str
     assigned_ip: str
+
+
+class GroupNetworkAssignment(BaseModel):
+    id: int
+    network_id: int
+    network_name: str
+    subnet: str
+    network_type: str
+    action: str
+
+    model_config = {"from_attributes": True}
+
+
+class GroupNetworkAssignmentCreate(BaseModel):
+    network_id: int
+    action: str = "allow"  # 'allow' or 'deny'

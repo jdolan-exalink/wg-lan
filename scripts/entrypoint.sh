@@ -72,5 +72,144 @@ sysctl -w net.ipv4.conf.wg0.src_valid_mark=1 2>/dev/null || true
 
 echo "    IP forwarding enabled"
 
-echo "==> Starting NetLoom dashboard on ${NETLOOM_HOST:-0.0.0.0}:${NETLOOM_PORT:-7777}"
-exec uvicorn app.main:app --host "${NETLOOM_HOST:-0.0.0.0}" --port "${NETLOOM_PORT:-7777}" --workers 1
+# Generate TLS certificates if needed
+if [ "${NETLOOM_TLS_ENABLED:-false}" = "true" ]; then
+    echo "==> TLS is enabled, ensuring certificates exist..."
+    python -c "
+from app.config import settings
+from app.utils.tls_cert_generator import ensure_certificates_exist
+
+if settings.tls_auto_generate:
+    ensure_certificates_exist(
+        cert_path=settings.tls_cert_path,
+        key_path=settings.tls_key_path,
+        country=settings.tls_country,
+        state=settings.tls_state,
+        locality=settings.tls_locality,
+        organization=settings.tls_organization,
+        common_name=settings.tls_common_name,
+        days_valid=settings.tls_cert_days,
+    )
+    print('==> TLS certificates ready')
+else:
+    print('==> TLS auto-generation disabled, using existing certificates')
+"
+fi
+
+# Start NetLoom dashboard + Client API
+echo "==> Starting NetLoom Client API on HTTP port ${NETLOOM_CLIENT_API_PORT:-7771}"
+echo "==> Starting NetLoom Client API on HTTPS port ${NETLOOM_CLIENT_API_TLS_PORT:-7772}"
+echo "==> Starting NetLoom dashboard on HTTP port ${NETLOOM_HTTP_PORT:-7777}"
+
+if [ "${NETLOOM_TLS_ENABLED:-false}" = "true" ]; then
+    echo "==> Starting NetLoom dashboard on HTTPS port ${NETLOOM_TLS_PORT:-7776}"
+    exec python -c "
+import uvicorn
+import threading
+from app.config import settings
+
+# 1. Client API server (HTTP, dedicated port)
+client_api_config = uvicorn.Config(
+    'app.client_app:app',
+    host=settings.host,
+    port=settings.client_api_port,
+    workers=1,
+    loop='asyncio',
+    log_config=None,
+)
+
+# 2. Client API server (HTTPS, dedicated port)
+client_api_tls_config = uvicorn.Config(
+    'app.client_app:app',
+    host=settings.tls_host,
+    port=settings.client_api_tls_port,
+    workers=1,
+    ssl_keyfile=settings.tls_key_path,
+    ssl_certfile=settings.tls_cert_path,
+    loop='asyncio',
+    log_config=None,
+)
+
+# 3. Dashboard HTTP server
+http_config = uvicorn.Config(
+    'app.main:app',
+    host=settings.host,
+    port=settings.http_port,
+    workers=1,
+    loop='asyncio',
+    log_config=None,
+)
+
+# 4. Dashboard HTTPS server
+https_config = uvicorn.Config(
+    'app.main:app',
+    host=settings.tls_host,
+    port=settings.tls_port,
+    workers=1,
+    ssl_keyfile=settings.tls_key_path,
+    ssl_certfile=settings.tls_cert_path,
+    loop='asyncio',
+    log_config=None,
+)
+
+def run_server(config, name):
+    server = uvicorn.Server(config)
+    print(f'==> {name} started')
+    server.run()
+
+# Start Client API HTTP in background thread
+client_thread = threading.Thread(target=run_server, args=(client_api_config, 'Client API HTTP'), daemon=True)
+client_thread.start()
+
+# Start Client API HTTPS in background thread
+client_tls_thread = threading.Thread(target=run_server, args=(client_api_tls_config, 'Client API HTTPS'), daemon=True)
+client_tls_thread.start()
+
+# Start Dashboard HTTP in background thread
+http_thread = threading.Thread(target=run_server, args=(http_config, 'Dashboard HTTP'), daemon=True)
+http_thread.start()
+
+# Run Dashboard HTTPS in main thread
+https_server = uvicorn.Server(https_config)
+https_server.run()
+"
+else
+    exec python -c "
+import uvicorn
+import threading
+from app.config import settings
+
+# 1. Client API server (HTTP only, dedicated port)
+client_api_config = uvicorn.Config(
+    'app.client_app:app',
+    host=settings.host,
+    port=settings.client_api_port,
+    workers=1,
+    loop='asyncio',
+    log_config=None,
+)
+
+# 2. Dashboard HTTP server
+http_config = uvicorn.Config(
+    'app.main:app',
+    host=settings.host,
+    port=settings.http_port,
+    workers=1,
+    loop='asyncio',
+    log_config=None,
+)
+
+def run_server(config, name):
+    server = uvicorn.Server(config)
+    print(f'==> {name} started')
+    server.run()
+
+# Start Client API in background thread
+client_thread = threading.Thread(target=run_server, args=(client_api_config, 'Client API'), daemon=True)
+client_thread.start()
+
+# Run Dashboard HTTP in main thread
+http_server = uvicorn.Server(http_config)
+http_server.run()
+"
+fi

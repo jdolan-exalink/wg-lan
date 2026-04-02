@@ -13,9 +13,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Only check CSRF on mutating API endpoints that use cookie auth
         if request.method not in SAFE_METHODS and request.url.path.startswith("/api/"):
-            # Skip CSRF check on login (no session cookie yet) and health
+            # Skip CSRF check on login (no session cookie yet), health, and client API
             skip_paths = {"/api/auth/login", "/api/system/health"}
-            if request.url.path not in skip_paths:
+            skip_prefixes = ("/api/v1/client",)
+            if request.url.path not in skip_paths and not request.url.path.startswith(skip_prefixes):
                 cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
                 header_token = request.headers.get(CSRF_HEADER_NAME)
 

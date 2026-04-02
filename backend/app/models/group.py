@@ -2,13 +2,30 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.network import Network
     from app.models.peer import Peer
+
+
+class GroupNetworkAccess(Base):
+    """Direct assignment of a network to a group with allow/deny action."""
+    __tablename__ = "group_network_access"
+    __table_args__ = (
+        UniqueConstraint("group_id", "network_id", name="uq_group_network_access"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
+    network_id: Mapped[int] = mapped_column(Integer, ForeignKey("networks.id", ondelete="CASCADE"), nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False, default="allow")  # 'allow' or 'deny'
+
+    group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="network_access")
+    network: Mapped["Network"] = relationship("Network", back_populates="group_access")
 
 
 class PeerGroup(Base):
@@ -17,6 +34,7 @@ class PeerGroup(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -30,6 +48,12 @@ class PeerGroup(Base):
     )
     members: Mapped[list["PeerGroupMember"]] = relationship(
         "PeerGroupMember", back_populates="group", cascade="all, delete-orphan"
+    )
+    user_groups: Mapped[list["UserGroup"]] = relationship(
+        "UserGroup", back_populates="group", cascade="all, delete-orphan"
+    )
+    network_access: Mapped[list["GroupNetworkAccess"]] = relationship(
+        "GroupNetworkAccess", back_populates="group", cascade="all, delete-orphan"
     )
 
 

@@ -13,11 +13,15 @@ Compiles groups/policies into a concrete list of allowed CIDRs for a given peer.
   - `both`: bidirectional access
 
 Precedence (deny-first):
-  1. deny_manual   (peer_overrides action='deny') — always wins
-  2. allow_manual  (peer_overrides action='allow') — explicit peer-level allow
-  3. deny_group    (policies action='deny' for any group the peer belongs to)
-  4. allow_group   (policies action='allow' for any group the peer belongs to)
-  5. allow_all     (default: if peer has NO groups, allow everything)
+  1. deny_override     (peer_overrides action='deny') — always wins
+  2. deny_user         (user_network_access action='deny') — user-level deny
+  3. deny_group        (group_network_access action='deny') — group-level deny
+  4. deny_policy       (policies action='deny') — policy-level deny
+  5. allow_user        (user_network_access action='allow') — user-level allow
+  6. allow_group       (group_network_access action='allow') — group-level allow
+  7. allow_manual      (peer_overrides action='allow', peer_network_access) — peer-level allow
+  8. allow_policy      (policies action='allow') — policy-level allow
+  9. allow_all         (default: if peer has NO groups/assignments/overrides, allow everything)
 """
 
 import json
@@ -25,10 +29,11 @@ import logging
 import ipaddress
 from sqlalchemy.orm import Session
 
-from app.models.group import PeerGroupMember, Policy
+from app.models.group import PeerGroupMember, Policy, GroupNetworkAccess
 from app.models.peer import Peer, PeerNetworkAccess, PeerOverride
 from app.models.network import Network
 from app.models.server_config import ServerConfig
+from app.models.user import UserNetworkAccess
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +78,43 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
         elif o.action == "deny":
             override_deny_networks.add(o.network_id)
 
-    # Step 3: If peer has NO groups and NO overrides → allow all networks
+    # Step 2b: Collect user-level network assignments (if peer belongs to a user)
+    peer = db.query(Peer).filter(Peer.id == peer_id).first()
+    user_allow_networks: set[int] = set()
+    user_deny_networks: set[int] = set()
+    if peer and peer.user_id:
+        user_assignments = db.query(UserNetworkAccess).filter(
+            UserNetworkAccess.user_id == peer.user_id
+        ).all()
+        for ua in user_assignments:
+            if ua.action == "allow":
+                user_allow_networks.add(ua.network_id)
+            elif ua.action == "deny":
+                user_deny_networks.add(ua.network_id)
+
+    # Step 2c: Collect group-level network assignments
+    group_allow_networks: set[int] = set()
+    group_deny_networks: set[int] = set()
+    if group_ids:
+        group_assignments = db.query(GroupNetworkAccess).filter(
+            GroupNetworkAccess.group_id.in_(group_ids)
+        ).all()
+        for ga in group_assignments:
+            if ga.action == "allow":
+                group_allow_networks.add(ga.network_id)
+            elif ga.action == "deny":
+                group_deny_networks.add(ga.network_id)
+
+    # Step 3: If peer has NO groups, NO user assignments, NO group assignments, and NO overrides → allow all networks
     if (
         not group_ids
         and not direct_allow_networks
         and not override_allow_networks
         and not override_deny_networks
+        and not user_allow_networks
+        and not user_deny_networks
+        and not group_allow_networks
+        and not group_deny_networks
     ):
         all_networks = db.query(Network).all()
         cidrs = sorted({n.subnet for n in all_networks})
@@ -118,21 +154,46 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
             elif p.action == "deny":
                 blocked_network_ids.update(source_member_networks)
 
-    # Step 5: Apply precedence
+    # Step 5: Apply precedence (deny-first)
+    # Precedence: deny_user > deny_group > deny_policy > allow_user > allow_group > allow_policy > allow_manual
     manual_allow_networks = direct_allow_networks | override_allow_networks
-    all_network_ids = allowed_network_ids | blocked_network_ids | manual_allow_networks | override_deny_networks
+    
+    # Start with all network IDs that appear anywhere
+    all_network_ids = (
+        allowed_network_ids 
+        | blocked_network_ids 
+        | manual_allow_networks 
+        | override_deny_networks
+        | user_allow_networks
+        | user_deny_networks
+        | group_allow_networks
+        | group_deny_networks
+    )
     
     final_network_ids: set[int] = set()
     for network_id in all_network_ids:
+        # Highest priority: explicit denies
         if network_id in override_deny_networks:
+            continue  # peer-level deny always wins
+        if network_id in user_deny_networks:
+            continue  # user-level deny wins
+        if network_id in group_deny_networks:
+            continue  # group-level deny wins
+        if network_id in blocked_network_ids:
+            continue  # policy-level deny
+        
+        # Explicit allows (in precedence order)
+        if network_id in user_allow_networks:
+            final_network_ids.add(network_id)  # user-level allow
+            continue
+        if network_id in group_allow_networks:
+            final_network_ids.add(network_id)  # group-level allow
             continue
         if network_id in manual_allow_networks:
-            final_network_ids.add(network_id)
-            continue
-        if network_id in blocked_network_ids:
+            final_network_ids.add(network_id)  # peer-level manual allow
             continue
         if network_id in allowed_network_ids:
-            final_network_ids.add(network_id)
+            final_network_ids.add(network_id)  # policy-level allow
 
     # Step 6: Resolve network IDs to CIDRs
     if not final_network_ids:

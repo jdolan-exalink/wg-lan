@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from app.database import Base, SessionLocal, engine
 from app.services.auth_service import create_admin_user, create_server_config
+from app.models.network import Network
 
 print("==> Creating database tables...")
 Base.metadata.create_all(bind=engine)
@@ -23,6 +24,23 @@ try:
 
     print("==> Initialising server config...")
     create_server_config(db)
+
+    print("==> Initialising server LAN network (192.168.70.0/23)...")
+    existing_lan = db.query(Network).filter(Network.subnet == "192.168.70.0/23").first()
+    if not existing_lan:
+        lan_network = Network(
+            name="LAN del Servidor",
+            subnet="192.168.70.0/23",
+            description="Red LAN del servidor WireGuard",
+            network_type="lan",
+            is_default=True,
+            peer_id=None,  # orphaned = accessible by default when firewall is off
+        )
+        db.add(lan_network)
+        db.commit()
+        print("    ✓ LAN network created")
+    else:
+        print("    ✓ LAN network already exists")
 
     print("==> Done. Login with admin / (your NETLOOM_ADMIN_PASSWORD setting, default: admin123)")
 finally:

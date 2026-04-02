@@ -1,8 +1,15 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
+    from app.models.device import Device
 
 
 class Peer(Base):
@@ -10,8 +17,10 @@ class Peer(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    peer_type: Mapped[str] = mapped_column(String, nullable=False)  # 'roadwarrior' or 'branch_office'
+    peer_type: Mapped[str] = mapped_column(String, nullable=False)  # 'roadwarrior', 'managed', or 'branch_office'
     device_type: Mapped[str | None] = mapped_column(String, nullable=True)  # laptop, ios, android, router, server
+    user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    device_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("devices.id", ondelete="SET NULL"), nullable=True)
     private_key: Mapped[str] = mapped_column(String, nullable=False)
     public_key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     preshared_key: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -21,6 +30,7 @@ class Peer(Base):
     remote_subnets: Mapped[str | None] = mapped_column(String, nullable=True)  # JSON array, branch_office only
     dns: Mapped[str | None] = mapped_column(String, nullable=True)
     persistent_keepalive: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
+    config_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # System peer (VPN server) - cannot be deleted
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
@@ -30,6 +40,8 @@ class Peer(Base):
     last_config_hash: Mapped[str | None] = mapped_column(String, nullable=True)  # Hash of last downloaded config
     last_config_downloaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # When config was last downloaded
 
+    user: Mapped["User | None"] = relationship("User", back_populates="peers", foreign_keys=[user_id])
+    device: Mapped["Device | None"] = relationship("Device")
     network: Mapped["Network"] = relationship("Network", foreign_keys=[network_id])
     networks_owned: Mapped[list["Network"]] = relationship("Network", back_populates="peer", foreign_keys="Network.peer_id")
     network_access: Mapped[list["PeerNetworkAccess"]] = relationship("PeerNetworkAccess", cascade="all, delete-orphan", back_populates="peer")

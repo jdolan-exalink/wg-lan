@@ -34,6 +34,14 @@ export interface HealthResponse {
   wg_interface: string;
 }
 
+export interface SystemMetrics {
+  ram_percent: number;
+  ram_used_gb: number;
+  ram_total_gb: number;
+  cpu_percent: number;
+  cpu_count: number;
+}
+
 export const systemApi = {
   health: () => client.get<HealthResponse>("/system/health"),
   getServerConfig: () => client.get<ServerConfig>("/system/server-config"),
@@ -45,4 +53,17 @@ export const systemApi = {
   wgDown: () => client.post<{ message: string }>("/system/wg/down"),
   wgRestart: () => client.post<{ message: string }>("/system/wg/restart"),
   backup: () => client.post<{ message: string; path: string }>("/system/backup"),
+  getMetrics: () => client.get<SystemMetrics>("/system/metrics"),
+  exportBackup: async () => {
+    const response = await client.get("/system/backup/export", { responseType: "blob" });
+    const contentDisposition = response.headers["content-disposition"] ?? "";
+    const match = contentDisposition.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : "netloom_backup.db";
+    const url = URL.createObjectURL(response.data as Blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };

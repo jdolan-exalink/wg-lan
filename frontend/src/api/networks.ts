@@ -40,6 +40,13 @@ export const groupsApi = {
     client.delete(`/groups/${group_id}/members/${peer_id}`),
   getMembers: (group_id: number) =>
     client.get<Array<{ peer_id: number; peer_name: string; peer_type: string; assigned_ip: string }>>(`/groups/${group_id}/members`),
+  // Group network access
+  getNetworks: (group_id: number) =>
+    client.get<Array<{ id: number; network_id: number; network_name: string; subnet: string; network_type: string; action: string }>>(`/groups/${group_id}/networks`),
+  assignNetwork: (group_id: number, data: { network_id: number; action: string }) =>
+    client.post(`/groups/${group_id}/networks`, data),
+  removeNetwork: (group_id: number, network_id: number) =>
+    client.delete(`/groups/${group_id}/networks/${network_id}`),
 };
 
 export const policiesApi = {

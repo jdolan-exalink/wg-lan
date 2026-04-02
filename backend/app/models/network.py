@@ -20,3 +20,5 @@ class Network(Base):
 
     peer: Mapped["Peer"] = relationship("Peer", foreign_keys=[peer_id], back_populates="networks_owned")
     peer_access: Mapped[list["PeerNetworkAccess"]] = relationship("PeerNetworkAccess", back_populates="network")
+    group_access: Mapped[list["GroupNetworkAccess"]] = relationship("GroupNetworkAccess", back_populates="network")
+    user_access: Mapped[list["UserNetworkAccess"]] = relationship("UserNetworkAccess", back_populates="network")

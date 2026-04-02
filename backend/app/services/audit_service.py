@@ -13,6 +13,7 @@ def log(
     target_id: int | None = None,
     details: dict | None = None,
     ip_address: str | None = None,
+    actor_device_id: int | None = None,
 ) -> None:
     entry = AuditLog(
         action=action,
@@ -21,6 +22,7 @@ def log(
         target_id=target_id,
         details=json.dumps(details) if details else None,
         ip_address=ip_address,
+        actor_device_id=actor_device_id,
     )
     db.add(entry)
     db.commit()
