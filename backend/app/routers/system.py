@@ -232,7 +232,8 @@ def set_firewall_status(
     db.commit()
     db.refresh(cfg)
     try:
-        wg_service.apply_config(db)
+        from app.services import iptables_service
+        iptables_service.apply_iptables_rules(db)
     except Exception:
         pass
     return FirewallStatusResponse(firewall_enabled=cfg.firewall_enabled)

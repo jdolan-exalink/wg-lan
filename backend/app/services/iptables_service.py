@@ -26,7 +26,10 @@ POSTROUTING_CHAIN = "NETLOOM-POST"
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=f"{cmd[0]}: command not found")
 
 
 def _get_outbound_interface() -> str:
@@ -123,7 +126,7 @@ def apply_iptables_rules(db: Session) -> None:
     logger.info(f"Branch office subnets: {branch_subnets}")
     
     # === Clean up old rules ===
-    # Remove ALL instances of NetLoom rules from FORWARD chain
+    # Remove blanket ACCEPT rules on wg_interface left by previous versions
     while True:
         result = _run(["iptables", "-D", "FORWARD", "-i", settings.wg_interface, "-j", "ACCEPT"])
         if result.returncode != 0:
@@ -136,8 +139,13 @@ def apply_iptables_rules(db: Session) -> None:
         result = _run(["iptables", "-D", "FORWARD", "-i", settings.wg_interface, "-o", settings.wg_interface, "-j", "DROP"])
         if result.returncode != 0:
             break
-    
-    # Remove old NetLoom chain links (all instances)
+    # Remove any orphan blanket ACCEPT rules without interface restriction
+    while True:
+        result = _run(["iptables", "-D", "FORWARD", "-j", "ACCEPT"])
+        if result.returncode != 0:
+            break
+
+    # Remove old NETLOOM-FWD chain links (all instances)
     while True:
         result = _run(["iptables", "-D", "FORWARD", "-j", FORWARD_CHAIN])
         if result.returncode != 0:
@@ -191,10 +199,80 @@ def apply_iptables_rules(db: Session) -> None:
         pass
     
     # === FORWARD rules ===
-    # Allow routed traffic from and back to WireGuard peers.
-    # Peer isolation is enforced by compiled AllowedIPs, not blanket FORWARD drops.
-    _run(["iptables", "-A", "FORWARD", "-i", settings.wg_interface, "-j", "ACCEPT"])
-    _run(["iptables", "-A", "FORWARD", "-o", settings.wg_interface, "-j", "ACCEPT"])
+    # Re-create NETLOOM-FWD and INSERT at position 1 so it runs BEFORE
+    # any existing ACCEPT rules (Docker, conntrack, etc.)
+    _run(["iptables", "-N", FORWARD_CHAIN])
+    _run(["iptables", "-I", "FORWARD", "1", "-j", FORWARD_CHAIN])
+
+    from app.models.server_config import ServerConfig
+    from app.models.group import PeerGroupMember
+    from app.services.policy_compiler import compile_allowed_cidrs
+
+    server_cfg_fw = db.query(ServerConfig).first()
+    firewall_on = server_cfg_fw.firewall_enabled if server_cfg_fw else False
+
+    if firewall_on:
+        # Allow established/related so return packets always flow back
+        _run(["iptables", "-A", FORWARD_CHAIN,
+              "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED",
+              "-j", "ACCEPT"])
+
+        # Per-peer enforcement for peers that belong to groups
+        enforced: list[str] = []
+        all_peers = db.query(Peer).filter(
+            Peer.is_enabled == True,
+            Peer.peer_type != "server",
+        ).all()
+        for peer in all_peers:
+            peer_ip = peer.assigned_ip.split("/")[0]
+            has_groups = db.query(PeerGroupMember).filter(
+                PeerGroupMember.peer_id == peer.id
+            ).first() is not None
+            if not has_groups:
+                continue  # no groups → covered by blanket ACCEPT below
+
+            # Collect all source IPs/CIDRs for this peer:
+            # - the WireGuard tunnel IP itself
+            # - any LAN subnets behind a branch_office router
+            source_cidrs: list[str] = [peer_ip]
+            if peer.peer_type == "branch_office" and peer.remote_subnets:
+                try:
+                    import json as _json
+                    source_cidrs.extend(_json.loads(peer.remote_subnets))
+                except (ValueError, TypeError):
+                    pass
+
+            allowed = compile_allowed_cidrs(db, peer.id)
+
+            for src in source_cidrs:
+                for cidr in allowed:
+                    _run(["iptables", "-A", FORWARD_CHAIN,
+                          "-i", settings.wg_interface,
+                          "-s", src, "-d", cidr,
+                          "-j", "ACCEPT"])
+                # DROP everything else from this source
+                _run(["iptables", "-A", FORWARD_CHAIN,
+                      "-i", settings.wg_interface,
+                      "-s", src,
+                      "-j", "DROP"])
+                # Flush conntrack so existing sessions are cut immediately
+                _run(["conntrack", "-D", "-s", src])
+
+            enforced.append(f"{peer.name}({len(source_cidrs)} srcs, {len(allowed)} cidrs)")
+
+        logger.info(f"Firewall ON — per-peer enforcement: {enforced}")
+
+        logger.info(f"Firewall ON — per-peer enforcement: {enforced}")
+    else:
+        logger.info("Firewall OFF — blanket ACCEPT on wg0")
+
+    # Blanket ACCEPT: covers peers without groups (they are wg0-ingress only)
+    # Return traffic for allowed sessions is already handled by ESTABLISHED/RELATED rule 1.
+    # NOTE: intentionally NOT adding "-o wg0 ACCEPT" — that would let any machine on the
+    # local LAN bypass policy enforcement by going eth0 → wg0.
+    _run(["iptables", "-A", FORWARD_CHAIN,
+          "-i", settings.wg_interface, "-j", "ACCEPT"])
+
     
     # === POSTROUTING rules ===
     # IMPORTANT: Insert SNAT rules at the TOP of POSTROUTING (before any MASQUERADE)
@@ -262,6 +340,40 @@ def apply_iptables_rules(db: Session) -> None:
     )
     
     logger.info(f"iptables rules applied: {len(branch_subnets)} SNAT rules, FORWARD rules set")
+
+
+def get_fwd_rules() -> list[dict]:
+    """
+    Parse NETLOOM-FWD chain and return structured rule list.
+    Each rule has: target (ACCEPT/DROP), src, dst, and match fields.
+    Skips the ESTABLISHED/RELATED catch-all rule (internal housekeeping).
+    """
+    result = _run(["iptables", "-L", FORWARD_CHAIN, "-n", "--line-numbers"])
+    if result.returncode != 0:
+        return []
+
+    rules = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        # Lines with rules start with a number
+        if not parts or not parts[0].isdigit():
+            continue
+        target = parts[1] if len(parts) > 1 else "?"
+        # Skip the ESTABLISHED/RELATED bookkeeping rule
+        if "ctstate" in line and "ESTABLISHED" in line:
+            continue
+        # Format without -v: num target prot opt src dst [extra]
+        # Columns: 0=num 1=target 2=prot 3=opt 4=src 5=dst 6+=extra
+        src = parts[4] if len(parts) > 4 else "?"
+        dst = parts[5] if len(parts) > 5 else "?"
+        extra = " ".join(parts[6:]) if len(parts) > 6 else ""
+        rules.append({
+            "target": target,   # ACCEPT | DROP
+            "src": src,
+            "dst": dst,
+            "extra": extra,
+        })
+    return rules
 
 
 def reset_iptables_rules() -> None:

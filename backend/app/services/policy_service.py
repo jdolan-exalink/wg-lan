@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.group import PeerGroup, Policy
@@ -14,7 +15,7 @@ def list_policies(
         query = query.filter(Policy.source_group_id == source_group_id)
     if dest_group_id:
         query = query.filter(Policy.dest_group_id == dest_group_id)
-    return query.all()
+    return query.order_by(Policy.position, Policy.id).all()
 
 
 def create_policy(db: Session, data: PolicyCreate) -> Policy:
@@ -31,11 +32,13 @@ def create_policy(db: Session, data: PolicyCreate) -> Policy:
         db.refresh(existing)
         return existing
     
+    max_pos = db.query(func.max(Policy.position)).scalar() or 0
     policy = Policy(
         source_group_id=data.source_group_id,
         dest_group_id=data.dest_group_id,
         direction=data.direction,
         action=data.action,
+        position=max_pos + 1,
     )
     db.add(policy)
     db.commit()

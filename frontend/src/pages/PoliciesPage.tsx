@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { policiesApi, groupsApi, firewallApi } from "@/api/networks";
-import { connectionLogsApi } from "@/api/connection-logs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,17 +23,13 @@ import {
   Shield,
   ShieldOff,
   ShieldCheck,
-  Info,
-  AlertTriangle,
-  AlertCircle,
-  XCircle,
-  ChevronDown,
-  ChevronRight,
   Save,
   RotateCcw,
+  RefreshCw,
+  GripVertical,
+  Info,
 } from "lucide-react";
 import type { Policy, PeerGroup } from "@/types/network";
-import type { ConnectionLog } from "@/types/connection-log";
 
 // ─── Direction helpers ────────────────────────────────────────────────────────
 
@@ -55,71 +50,7 @@ type PendingOp = "create" | "update" | "delete";
 
 interface StagedPolicy extends Policy {
   _pending?: PendingOp;
-  _localId?: string; // temp ID for staged creates before server assigns real ID
-}
-
-// ─── Log helpers ──────────────────────────────────────────────────────────────
-
-const severityIcon: Record<string, React.ReactNode> = {
-  info:     <Info     className="h-3.5 w-3.5 text-blue-400"   />,
-  warning:  <AlertTriangle className="h-3.5 w-3.5 text-yellow-400" />,
-  error:    <AlertCircle   className="h-3.5 w-3.5 text-orange-400" />,
-  critical: <XCircle       className="h-3.5 w-3.5 text-red-400"    />,
-};
-
-const eventTypeLabel: Record<string, string> = {
-  handshake:        "Handshake",
-  disconnect:       "Desconexión",
-  timeout:          "Timeout",
-  firewall_block:   "Bloqueo Firewall",
-  config_applied:   "Config Aplicada",
-  interface_up:     "Interfaz Arriba",
-  interface_down:   "Interfaz Abajo",
-  error:            "Error",
-  policy_compiled:  "Políticas Compiladas",
-  iptables_applied: "iptables Aplicado",
-};
-
-function LogRow({ log }: { log: ConnectionLog }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasDetails = log.details && log.details !== "null";
-
-  return (
-    <>
-      <tr
-        className="border-b last:border-0 hover:bg-muted/20 cursor-pointer text-xs"
-        onClick={() => hasDetails && setExpanded(!expanded)}
-      >
-        <td className="px-3 py-1.5">
-          <div className="flex items-center gap-1">
-            {hasDetails ? (
-              expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />
-            ) : <span className="w-3" />}
-            {severityIcon[log.severity] ?? severityIcon.info}
-          </div>
-        </td>
-        <td className="px-3 py-1.5 text-muted-foreground font-mono whitespace-nowrap">
-          {new Date(log.timestamp).toLocaleString()}
-        </td>
-        <td className="px-3 py-1.5">
-          <Badge variant="outline" className="text-xs py-0">
-            {eventTypeLabel[log.event_type] ?? log.event_type}
-          </Badge>
-        </td>
-        <td className="px-3 py-1.5 font-medium">{log.peer_name ?? "—"}</td>
-        <td className="px-3 py-1.5 max-w-xs truncate text-muted-foreground">{log.message}</td>
-      </tr>
-      {expanded && hasDetails && (
-        <tr className="bg-muted/10">
-          <td colSpan={5} className="px-4 py-2">
-            <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
-              {JSON.stringify(JSON.parse(log.details!), null, 2)}
-            </pre>
-          </td>
-        </tr>
-      )}
-    </>
-  );
+  _localId?: string;
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -145,15 +76,20 @@ export function PoliciesPage() {
     queryFn: () => firewallApi.getStatus().then((r) => r.data),
   });
 
-  const { data: recentLogs } = useQuery({
-    queryKey: ["firewall-logs"],
-    queryFn: () => connectionLogsApi.list({ limit: 30 }).then((r) => r.data),
-    refetchInterval: 20_000,
+  const { data: fwRules = [], refetch: refetchRules } = useQuery({
+    queryKey: ["firewall-rules"],
+    queryFn: () => policiesApi.firewallRules().then((r) => r.data),
+    refetchInterval: 10_000,
   });
 
   // ── Staged state ────────────────────────────────────────────────────────────
   const [stagedPolicies, setStagedPolicies] = useState<StagedPolicy[]>([]);
   const [stagedFirewall, setStagedFirewall] = useState<boolean | null>(null);
+  const [positionsChanged, setPositionsChanged] = useState(false);
+
+  // ── Drag-and-drop state ─────────────────────────────────────────────────────
+  const [dragSrcIdx, setDragSrcIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
   // Sync staged to server state when server data changes
   useEffect(() => {
@@ -173,9 +109,35 @@ export function PoliciesPage() {
 
   const hasPendingChanges =
     stagedPolicies.some((p) => p._pending) ||
+    positionsChanged ||
     (stagedFirewall !== null && stagedFirewall !== firewallStatus?.firewall_enabled);
 
   const visiblePolicies = stagedPolicies.filter((p) => p._pending !== "delete");
+
+  // ── Drag handlers (for rule reordering) ─────────────────────────────────────
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    e.dataTransfer.effectAllowed = "move";
+    setDragSrcIdx(idx);
+  };
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIdx(idx);
+  };
+  const handleDragLeave = () => setDragOverIdx(null);
+  const handleDrop = (e: React.DragEvent, dstIdx: number) => {
+    e.preventDefault();
+    setDragOverIdx(null);
+    if (dragSrcIdx === null || dragSrcIdx === dstIdx) { setDragSrcIdx(null); return; }
+    const vis = [...visiblePolicies];
+    const [moved] = vis.splice(dragSrcIdx, 1);
+    vis.splice(dstIdx, 0, moved);
+    const deleted = stagedPolicies.filter((p) => p._pending === "delete");
+    setStagedPolicies([...vis, ...deleted]);
+    setPositionsChanged(true);
+    setDragSrcIdx(null);
+  };
+  const handleDragEnd = () => { setDragSrcIdx(null); setDragOverIdx(null); };
 
   // ── Add-rule form state ─────────────────────────────────────────────────────
   const [showForm, setShowForm]       = useState(false);
@@ -223,6 +185,7 @@ export function PoliciesPage() {
       direction: newDir,
       action:    newAction,
       enabled:   true,
+      position:  9999,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -282,15 +245,23 @@ export function PoliciesPage() {
     for (const p of stagedPolicies.filter((x) => x._pending === "update")) {
       await updateMutation.mutateAsync({ id: p.id, data: { action: p.action, enabled: p.enabled } });
     }
+    // 5. Reorder existing policies (skip unsaved creates that still have id=-1)
+    if (positionsChanged) {
+      const orderedIds = visiblePolicies.filter((p) => p.id > 0).map((p) => p.id);
+      if (orderedIds.length > 0) await policiesApi.reorder(orderedIds);
+      setPositionsChanged(false);
+    }
     // Refresh
     qc.invalidateQueries({ queryKey: ["policies"] });
     qc.invalidateQueries({ queryKey: ["firewall-status"] });
+    qc.invalidateQueries({ queryKey: ["firewall-rules"] });
     setStagedFirewall(null);
   };
 
   const handleCancel = () => {
     setStagedPolicies((serverPolicies ?? []).map((p) => ({ ...p })));
     setStagedFirewall(null);
+    setPositionsChanged(false);
     setShowForm(false);
   };
 
@@ -433,7 +404,9 @@ export function PoliciesPage() {
                   <Shield className="h-4 w-4" /> Reglas de Firewall
                 </CardTitle>
                 <CardDescription className="text-xs mt-0.5">
-                  Desactiva una regla con el interruptor sin eliminarla. Prioridad: deny &gt; allow.
+                  Las reglas se evalúan <strong>de arriba hacia abajo</strong> — arrastra{" "}
+                  <GripVertical className="h-3 w-3 inline-block" /> para cambiar el orden.
+                  Prioridad explícita: deny &gt; allow.
                 </CardDescription>
               </div>
               <Button size="sm" variant="outline" onClick={() => setShowForm(true)}>
@@ -449,6 +422,8 @@ export function PoliciesPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/40">
+                      <th className="w-8 px-2 py-2" title="Arrastrar para reordenar" />
+                      <th className="text-left px-2 py-2 font-medium w-6 text-muted-foreground">#</th>
                       <th className="text-left px-4 py-2 font-medium w-8">Activa</th>
                       <th className="text-left px-4 py-2 font-medium">Origen</th>
                       <th className="text-left px-4 py-2 font-medium">Dirección</th>
@@ -458,16 +433,34 @@ export function PoliciesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visiblePolicies.map((p) => {
+                    {visiblePolicies.map((p, idx) => {
                       const key = getKey(p);
                       const isNew = p._pending === "create";
+                      const isDragging = dragSrcIdx === idx;
+                      const isOver = dragOverIdx === idx && dragSrcIdx !== idx;
                       return (
                         <tr
                           key={key}
-                          className={`border-b last:border-0 transition-colors ${
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, idx)}
+                          onDragOver={(e) => handleDragOver(e, idx)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, idx)}
+                          onDragEnd={handleDragEnd}
+                          className={`border-b last:border-0 transition-colors cursor-default ${
+                            isDragging ? "opacity-30" :
+                            isOver    ? "border-t-2 border-t-primary bg-primary/5" :
                             !p.enabled ? "opacity-50" : ""
                           } ${isNew ? "bg-primary/5" : "hover:bg-muted/10"}`}
                         >
+                          {/* drag handle */}
+                          <td className="px-2 py-2">
+                            <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab active:cursor-grabbing" />
+                          </td>
+                          {/* row number */}
+                          <td className="px-2 py-2 text-xs text-muted-foreground font-mono">
+                            {idx + 1}
+                          </td>
                           {/* enabled toggle */}
                           <td className="px-4 py-2">
                             <Switch
@@ -531,30 +524,88 @@ export function PoliciesPage() {
         </>
       )}
 
-      {/* ── Firewall Logs ───────────────────────────────────────────────────── */}
+      {/* ── Live iptables rules ─────────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Shield className="h-4 w-4" /> Registros de Firewall
-          </CardTitle>
-          <CardDescription className="text-xs">Últimos 30 eventos del sistema</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Shield className="h-4 w-4" /> Reglas de Firewall Activas (iptables)
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Vista en tiempo real de la cadena <code className="font-mono">NETLOOM-FWD</code>.
+                Las reglas se evalúan <strong>de arriba hacia abajo</strong> — la primera coincidencia (ACCEPT o DROP) gana.
+                Un DROP al final de cada equipo bloquea todo lo no permitido explícitamente.
+              </CardDescription>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => refetchRules()}>
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
-          {(recentLogs ?? []).length === 0 ? (
-            <p className="px-6 py-6 text-center text-sm text-muted-foreground">Sin eventos recientes.</p>
+          {/* explanation banner */}
+          <div className="mx-4 mb-3 flex items-start gap-2 rounded-md border border-blue-400/30 bg-blue-500/5 px-3 py-2 text-xs text-blue-700 dark:text-blue-400">
+            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>
+              Cada equipo recibe reglas <strong>ACCEPT</strong> para las redes que tiene permitidas y luego un{" "}
+              <strong>DROP</strong> que bloquea todo lo demás. Si un equipo no puede acceder a algún destino,
+              revisa las políticas de su grupo o verifica que ese destino esté en una red configurada.
+            </span>
+          </div>
+          {fwRules.length === 0 ? (
+            <p className="px-6 py-6 text-center text-sm text-muted-foreground">
+              Sin reglas activas en iptables.
+            </p>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-xs font-mono">
               <thead>
-                <tr className="border-b bg-muted/40 text-xs">
-                  <th className="w-8 px-3 py-2" />
-                  <th className="text-left px-3 py-2 font-medium">Fecha</th>
-                  <th className="text-left px-3 py-2 font-medium">Tipo</th>
-                  <th className="text-left px-3 py-2 font-medium">Peer</th>
-                  <th className="text-left px-3 py-2 font-medium">Mensaje</th>
+                <tr className="border-b bg-muted/40">
+                  <th className="w-8 px-3 py-2 text-left font-semibold font-sans text-muted-foreground">#</th>
+                  <th className="w-6 px-3 py-2" />
+                  <th className="text-left px-3 py-2 font-semibold font-sans">Acción</th>
+                  <th className="text-left px-3 py-2 font-semibold font-sans">Origen</th>
+                  <th className="text-left px-3 py-2 font-semibold font-sans">Destino</th>
+                  <th className="text-left px-3 py-2 font-semibold font-sans">Detalles</th>
                 </tr>
               </thead>
               <tbody>
-                {(recentLogs ?? []).map((log) => <LogRow key={log.id} log={log} />)}
+                {fwRules.map((rule, i) => {
+                  const isAccept = rule.target === "ACCEPT";
+                  const isDrop   = rule.target === "DROP" || rule.target === "REJECT";
+                  return (
+                    <tr
+                      key={i}
+                      className={`border-b last:border-0 ${
+                        isAccept ? "bg-green-500/5 border-l-2 border-l-green-500"
+                        : isDrop ? "bg-red-500/5 border-l-2 border-l-red-500"
+                        : ""
+                      }`}
+                    >
+                      <td className="px-3 py-1.5 text-muted-foreground font-sans">{i + 1}</td>
+                      <td className="px-3 py-1.5">
+                        {isAccept ? <Check className="h-3 w-3 text-green-500" />
+                          : isDrop ? <X className="h-3 w-3 text-red-500" />
+                          : null}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs py-0 font-mono ${
+                            isAccept ? "border-green-400 text-green-600 dark:text-green-400 bg-green-500/10"
+                            : isDrop ? "border-red-400 text-red-600 dark:text-red-400 bg-red-500/10"
+                            : ""
+                          }`}
+                        >
+                          {rule.target}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-1.5 text-foreground">{rule.src}</td>
+                      <td className="px-3 py-1.5 text-foreground">{rule.dst}</td>
+                      <td className="px-3 py-1.5 text-muted-foreground">{rule.extra || "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

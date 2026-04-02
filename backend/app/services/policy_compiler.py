@@ -181,55 +181,25 @@ def _get_group_networks(db: Session, group_id: int) -> set[int]:
 
 def compile_peer_routes(db: Session, peer_id: int) -> list[str]:
     """
-    Return routes to other peers' networks that this peer should be able to reach.
+    Return routes to all other branch-office peers' networks.
+    Policy enforcement is done server-side via iptables, so the client
+    config always receives the full set of routes.
     """
-    requesting_peer = db.query(Peer).filter(Peer.id == peer_id).first()
-    if not requesting_peer:
-        return []
-
-    memberships = db.query(PeerGroupMember).filter(
-        PeerGroupMember.peer_id == peer_id
-    ).all()
-    has_groups = len(memberships) > 0
-
-    overrides = db.query(PeerOverride).filter(PeerOverride.peer_id == peer_id).all()
-    has_overrides = len(overrides) > 0
-
     branch_peers = db.query(Peer).filter(
         Peer.peer_type == "branch_office",
         Peer.is_enabled == True,
         Peer.id != peer_id,
     ).all()
 
-    if not has_groups and not has_overrides:
-        routes: set[str] = set()
-        for branch in branch_peers:
-            vpn_ip = branch.assigned_ip.split("/")[0]
-            routes.add(f"{vpn_ip}/32")
-            if branch.remote_subnets:
-                try:
-                    subnets = json.loads(branch.remote_subnets)
-                    for subnet in subnets:
-                        routes.add(subnet)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        return sorted(routes)
-
-    allowed_cidrs = set(compile_allowed_cidrs(db, peer_id))
-    
-    routes = set()
+    routes: set[str] = set()
     for branch in branch_peers:
         vpn_ip = branch.assigned_ip.split("/")[0]
-        
-        if allowed_cidrs:
-            routes.add(f"{vpn_ip}/32")
-        
+        routes.add(f"{vpn_ip}/32")
         if branch.remote_subnets:
             try:
                 subnets = json.loads(branch.remote_subnets)
                 for subnet in subnets:
-                    if _cidr_overlaps_with_allowed(subnet, allowed_cidrs):
-                        routes.add(subnet)
+                    routes.add(subnet)
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -238,20 +208,26 @@ def compile_peer_routes(db: Session, peer_id: int) -> list[str]:
 
 def compile_client_allowed_ips(db: Session, peer_id: int) -> list[str]:
     """
-    Compile the complete AllowedIPs for a client config.
-    Combines VPN subnet + network CIDRs + peer routes.
-    Removes redundant/overlapping CIDRs.
+    Compile AllowedIPs for a client config.
+    Always returns ALL networks + ALL branch routes + VPN subnet.
+    Policy enforcement is done server-side via iptables, so the client
+    config never needs to be re-downloaded when policies change.
     """
     from app.config import settings
-    
+    from app.models.network import Network
+
     vpn_subnet = settings.subnet
-    
-    network_cidrs = compile_allowed_cidrs(db, peer_id)
+
+    # All known networks (LAN + VPN)
+    all_networks = db.query(Network).all()
+    network_cidrs = {n.subnet for n in all_networks}
+
+    # All branch-office routes (VPN IPs + remote subnets)
     peer_routes_list = compile_peer_routes(db, peer_id)
-    
-    all_cidrs = {vpn_subnet} | set(network_cidrs) | set(peer_routes_list)
+
+    all_cidrs = {vpn_subnet} | network_cidrs | set(peer_routes_list)
     cleaned_cidrs = _remove_redundant_cidrs(all_cidrs)
-    
+
     return sorted(cleaned_cidrs)
 
 

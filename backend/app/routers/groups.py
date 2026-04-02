@@ -6,19 +6,20 @@ from app.dependencies import require_password_changed
 from app.models.user import User
 from app.schemas.group import AddMembersRequest, GroupMemberResponse, PeerGroupCreate, PeerGroupResponse, PeerGroupUpdate
 from app.services import group_service
-from app.services import wg_service
-from app.services.peer_service import _bump_config_changed
+from app.services import iptables_service
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 
 
 def _apply_group_changes(db: Session) -> None:
-    _bump_config_changed(db)
-    db.commit()
+    """Re-apply iptables rules immediately after any group change.
+    Group membership changes only affect server-side iptables enforcement;
+    client configs are static so no wg syncconf is needed."""
     try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+        iptables_service.apply_iptables_rules(db)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"iptables re-apply failed: {e}")
 
 
 @router.get("", response_model=list[PeerGroupResponse])

@@ -32,6 +32,7 @@ export interface Policy {
   direction: "outbound" | "inbound" | "both";
   action: "allow" | "deny";
   enabled: boolean;
+  position: number;
   created_at: string;
   updated_at: string;
 }

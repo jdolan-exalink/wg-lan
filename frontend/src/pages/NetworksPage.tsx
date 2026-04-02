@@ -249,7 +249,7 @@ export function NetworksPage() {
   });
 
   const create = useMutation({
-    mutationFn: (data: FormData) => networksApi.create(data as Omit<Network, "id">),
+    mutationFn: (data: FormData) => networksApi.create(data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["networks"] }); setShowForm(false); },
   });
 
