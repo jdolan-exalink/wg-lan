@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, Users, ChevronDown, ChevronRight, Info, ArrowRight, Router, Laptop, Smartphone, Server, X, Check, Loader2, Globe } from "lucide-react";
+import { Plus, Trash2, Users, ChevronDown, ChevronRight, Info, ArrowRight, Router, Laptop, Smartphone, Server, X, Check, Loader2, Globe, Shield, ShieldAlert } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -60,6 +60,12 @@ export function GroupsPage() {
   const [netPeerId, setNetPeerId] = useState("");
   const [netError, setNetError] = useState("");
 
+  // ── Assign destination network dialog state ───────────────────────────────
+  const [assignNetworkGroupId, setAssignNetworkGroupId] = useState<number | null>(null);
+  const [assignNetworkId, setAssignNetworkId] = useState<string>("");
+  const [assignNetworkAction, setAssignNetworkAction] = useState<"allow" | "deny">("allow");
+  const [assignNetworkError, setAssignNetworkError] = useState("");
+
   const { data: groups = [] } = useQuery({
     queryKey: ["groups"],
     queryFn: () => groupsApi.list().then((r) => r.data),
@@ -78,6 +84,12 @@ export function GroupsPage() {
   const { data: existingMembers = [], isFetching: membersFetching } = useQuery({
     queryKey: ["group-members", expandedGroupId],
     queryFn: () => expandedGroupId ? groupsApi.getMembers(expandedGroupId).then((r) => r.data) : [],
+    enabled: expandedGroupId !== null,
+  });
+
+  const { data: groupNetworkAssignments = [] } = useQuery({
+    queryKey: ["group-networks", expandedGroupId],
+    queryFn: () => expandedGroupId ? groupsApi.getNetworks(expandedGroupId).then((r) => r.data) : [],
     enabled: expandedGroupId !== null,
   });
 
@@ -108,6 +120,31 @@ export function GroupsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["groups"] });
       qc.invalidateQueries({ queryKey: ["group-members"] });
+    },
+  });
+
+  const assignNetworkToGroup = useMutation({
+    mutationFn: ({ groupId, data }: { groupId: number; data: { network_id: number; action: string } }) =>
+      groupsApi.assignNetwork(groupId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["group-networks"] });
+      qc.invalidateQueries({ queryKey: ["groups"] });
+      setAssignNetworkGroupId(null);
+      setAssignNetworkId("");
+      setAssignNetworkAction("allow");
+      setAssignNetworkError("");
+    },
+    onError: (err: any) => {
+      setAssignNetworkError(err?.response?.data?.detail ?? "Error al asignar red");
+    },
+  });
+
+  const removeNetworkFromGroup = useMutation({
+    mutationFn: ({ groupId, networkId }: { groupId: number; networkId: number }) =>
+      groupsApi.removeNetwork(groupId, networkId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["group-networks"] });
+      qc.invalidateQueries({ queryKey: ["groups"] });
     },
   });
 
@@ -250,9 +287,12 @@ export function GroupsPage() {
                   members={expandedGroupId === g.id ? existingMembers : []}
                   membersLoading={expandedGroupId === g.id && membersFetching}
                   groupNetworks={expandedGroupId === g.id ? groupNetworks : []}
+                  networkAssignments={expandedGroupId === g.id ? groupNetworkAssignments : []}
                   onAddPeers={() => { setAddPeersGroupId(g.id); setSelectedPeerIds(new Set()); }}
                   onAddNetwork={() => { setAddNetworkGroupId(g.id); setNetPeerId(""); setNetError(""); }}
+                  onAssignNetwork={() => { setAssignNetworkGroupId(g.id); setAssignNetworkId(""); setAssignNetworkAction("allow"); setAssignNetworkError(""); }}
                   onRemovePeer={(peerId) => removeMember.mutate({ groupId: g.id, peerId })}
+                  onRemoveNetworkAssignment={(networkId) => removeNetworkFromGroup.mutate({ groupId: g.id, networkId })}
                   onDelete={() => setDeleteGroupId(g.id)}
                 />
               ))}
@@ -388,6 +428,84 @@ export function GroupsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Assign Network to Group Dialog */}
+      <Dialog open={assignNetworkGroupId !== null} onOpenChange={(open) => {
+        if (!open) { setAssignNetworkGroupId(null); setAssignNetworkId(""); setAssignNetworkAction("allow"); setAssignNetworkError(""); }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Asignar red de destino al grupo</DialogTitle>
+            <DialogDescription>
+              Seleccioná una red existente para asignar a este grupo. Los peers del grupo podrán acceder (o se les negará) a esta red según la acción seleccionada.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label>Red de destino</Label>
+              <Select value={assignNetworkId} onValueChange={setAssignNetworkId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccioná una red..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {networks.map((n) => (
+                    <SelectItem key={n.id} value={String(n.id)}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{n.name}</span>
+                        <code className="text-xs font-mono text-muted-foreground">{n.subnet}</code>
+                        <Badge variant="outline" className="text-[10px]">{n.network_type}</Badge>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Acción</Label>
+              <Select value={assignNetworkAction} onValueChange={(v) => setAssignNetworkAction(v as "allow" | "deny")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="allow">
+                    <div className="flex items-center gap-2">
+                      <Shield className="h-3.5 w-3.5 text-green-500" />
+                      <span>Permitir acceso</span>
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="deny">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className="h-3.5 w-3.5 text-red-500" />
+                      <span>Denegar acceso</span>
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {assignNetworkError && (
+              <p className="text-xs text-destructive">{assignNetworkError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignNetworkGroupId(null)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (assignNetworkGroupId && assignNetworkId) {
+                  assignNetworkToGroup.mutate({
+                    groupId: assignNetworkGroupId,
+                    data: { network_id: parseInt(assignNetworkId), action: assignNetworkAction },
+                  });
+                }
+              }}
+              disabled={!assignNetworkId || assignNetworkToGroup.isPending}
+            >
+              {assignNetworkToGroup.isPending ? "Asignando..." : "Asignar red"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteGroupId !== null} onOpenChange={(open) => !open && setDeleteGroupId(null)}>
         <DialogContent>
@@ -427,9 +545,12 @@ function GroupRow({
   members,
   membersLoading,
   groupNetworks,
+  networkAssignments,
   onAddPeers,
   onAddNetwork,
+  onAssignNetwork,
   onRemovePeer,
+  onRemoveNetworkAssignment,
   onDelete,
 }: {
   group: { id: number; name: string; description: string | null; member_count: number };
@@ -438,9 +559,12 @@ function GroupRow({
   members: Array<{ peer_id: number; peer_name: string; peer_type: string; assigned_ip: string }>;
   membersLoading: boolean;
   groupNetworks: Network[];
+  networkAssignments: Array<{ id: number; network_id: number; network_name: string; subnet: string; network_type: string; action: string }>;
   onAddPeers: () => void;
   onAddNetwork: () => void;
+  onAssignNetwork: () => void;
   onRemovePeer: (peerId: number) => void;
+  onRemoveNetworkAssignment: (networkId: number) => void;
   onDelete: () => void;
 }) {
   return (
@@ -546,6 +670,54 @@ function GroupRow({
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Redes de Destino (Group→Network Assignments) ──────────── */}
+              {!membersLoading && (
+                <div className="space-y-2 border-t pt-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-foreground">Redes de Destino</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Redes específicas asignadas a este grupo. Controla qué redes pueden acceder los peers del grupo.
+                      </p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={onAssignNetwork}>
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Asignar red
+                    </Button>
+                  </div>
+                  {networkAssignments.length === 0 ? (
+                    <p className="text-xs text-muted-foreground/60 italic">
+                      No hay redes asignadas directamente — las políticas grupo→grupo controlan el acceso.
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      {networkAssignments.map((a) => (
+                        <div key={a.id} className="flex items-center gap-3 text-xs py-1 px-2 rounded bg-muted/20">
+                          {a.action === "allow" ? (
+                            <Shield className="h-3 w-3 text-green-500 shrink-0" />
+                          ) : (
+                            <ShieldAlert className="h-3 w-3 text-red-500 shrink-0" />
+                          )}
+                          <span className="font-medium">{a.network_name}</span>
+                          <code className="font-mono text-muted-foreground bg-muted/40 px-1 rounded">{a.subnet}</code>
+                          <Badge variant={a.action === "allow" ? "default" : "destructive"} className="text-[10px]">
+                            {a.action === "allow" ? "Permitir" : "Denegar"}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px]">{a.network_type}</Badge>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 ml-auto"
+                            onClick={() => onRemoveNetworkAssignment(a.network_id)}
+                          >
+                            <X className="h-3 w-3 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

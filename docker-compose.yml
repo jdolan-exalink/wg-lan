@@ -13,7 +13,25 @@ services:
       # Container-internal paths (override the host-relative paths in .env)
       - NETLOOM_DB_PATH=/app/data/netloom.db
       - NETLOOM_WG_CONFIG_PATH=/etc/wireguard
+      
+      # TLS/HTTPS Configuration
+      - NETLOOM_TLS_ENABLED=${NETLOOM_TLS_ENABLED:-false}
+      - NETLOOM_TLS_CERT_PATH=/app/certs/server.crt
+      - NETLOOM_TLS_KEY_PATH=/app/certs/server.key
+      - NETLOOM_TLS_HOST=0.0.0.0
+      - NETLOOM_TLS_PORT=${NETLOOM_TLS_PORT:-7776}
+      - NETLOOM_HTTP_PORT=${NETLOOM_HTTP_PORT:-7777}
+      - NETLOOM_CLIENT_API_PORT=${NETLOOM_CLIENT_API_PORT:-7771}
+      - NETLOOM_CLIENT_API_TLS_PORT=${NETLOOM_CLIENT_API_TLS_PORT:-7772}
+      - NETLOOM_TLS_AUTO_GENERATE=${NETLOOM_TLS_AUTO_GENERATE:-true}
+      - NETLOOM_TLS_CERT_DAYS=${NETLOOM_TLS_CERT_DAYS:-3650}
+      - NETLOOM_TLS_COUNTRY=${NETLOOM_TLS_COUNTRY:-US}
+      - NETLOOM_TLS_STATE=${NETLOOM_TLS_STATE:-California}
+      - NETLOOM_TLS_LOCALITY=${NETLOOM_TLS_LOCALITY:-San Francisco}
+      - NETLOOM_TLS_ORGANIZATION=${NETLOOM_TLS_ORGANIZATION:-NetLoom}
+      - NETLOOM_TLS_COMMON_NAME=${NETLOOM_TLS_COMMON_NAME:-netloom.local}
 
     volumes:
       - ./data:/app/data          # SQLite DB + backups
       - ./config:/etc/wireguard   # WireGuard configs
+      - ./certs:/app/certs        # TLS certificates

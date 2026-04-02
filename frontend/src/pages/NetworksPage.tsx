@@ -75,7 +75,7 @@ function AddPeerToNetwork({ networkId, allPeers, assignedPeerIds }: { networkId:
     },
   });
 
-  const available = allPeers.filter((p) => !p.is_system && !assignedPeerIds.includes(p.id));
+  const available = allPeers.filter((p) => !assignedPeerIds.includes(p.id));
 
   if (available.length === 0) return null;
 
@@ -104,7 +104,12 @@ function AddPeerToNetwork({ networkId, allPeers, assignedPeerIds }: { networkId:
                     <div className="flex items-center gap-2">
                       {peerTypeIcons[p.device_type ?? p.peer_type]}
                       <span>{p.name}</span>
-                      <Badge variant="outline" className="text-[10px]">{p.peer_type}</Badge>
+                      {p.is_system && (
+                        <Badge variant="secondary" className="text-[10px]">Server</Badge>
+                      )}
+                      {!p.is_system && (
+                        <Badge variant="outline" className="text-[10px]">{p.peer_type}</Badge>
+                      )}
                       <span className="text-xs font-mono text-muted-foreground">{p.assigned_ip}</span>
                     </div>
                   </SelectItem>
@@ -211,7 +216,11 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
                           {peerTypeIcons[peer.device_type ?? peer.peer_type] ?? <Laptop className="h-3 w-3" />}
                         </span>
                         <span className="font-medium">{peer.name}</span>
-                        <Badge variant="outline" className="text-[10px]">{peer.peer_type}</Badge>
+                        {peer.is_system ? (
+                          <Badge variant="secondary" className="text-[10px]">Server</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">{peer.peer_type}</Badge>
+                        )}
                         <span className="font-mono text-muted-foreground">{peer.assigned_ip}</span>
                         <Button
                           variant="ghost"

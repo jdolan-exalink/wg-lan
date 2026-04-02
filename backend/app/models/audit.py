@@ -11,6 +11,7 @@ class AuditLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_device_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("devices.id"), nullable=True)
     action: Mapped[str] = mapped_column(String, nullable=False)  # e.g., peer.create, policy.update
     target_type: Mapped[str | None] = mapped_column(String, nullable=True)  # peer, network, zone, group, user
     target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

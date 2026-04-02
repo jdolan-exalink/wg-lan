@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -7,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.server_config import ServerConfig
 from app.models.user import User
+from app.models.refresh_token import RefreshToken
 from app.utils.ip_utils import get_server_ip
 from app.utils.wg_keygen import safe_generate_keypair
 
@@ -24,7 +27,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(user_id: int) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(hours=settings.access_token_expire_hours)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {"sub": str(user_id), "exp": expire}
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
@@ -40,12 +43,110 @@ def verify_token(token: str) -> int | None:
         return None
 
 
+def generate_refresh_token() -> str:
+    """Generate a secure random refresh token."""
+    return secrets.token_urlsafe(64)
+
+
+def hash_refresh_token(token: str) -> str:
+    """Hash a refresh token for storage."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_refresh_token(
+    db: Session,
+    user_id: int,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> str:
+    """Create a new refresh token and store it in the database."""
+    raw_token = generate_refresh_token()
+    token_hash = hash_refresh_token(raw_token)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+
+    refresh_token = RefreshToken(
+        user_id=user_id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        user_agent=user_agent,
+        ip_address=ip_address,
+    )
+    db.add(refresh_token)
+    db.commit()
+    return raw_token
+
+
+def verify_refresh_token(db: Session, token: str) -> RefreshToken | None:
+    """Verify a refresh token and return the database record."""
+    token_hash = hash_refresh_token(token)
+    refresh_token = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > datetime.now(timezone.utc),
+        )
+        .first()
+    )
+    return refresh_token
+
+
+def revoke_refresh_token(db: Session, token: str) -> bool:
+    """Revoke a specific refresh token."""
+    token_hash = hash_refresh_token(token)
+    refresh_token = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == token_hash)
+        .first()
+    )
+    if refresh_token:
+        refresh_token.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+        return True
+    return False
+
+
+def revoke_all_user_tokens(db: Session, user_id: int) -> int:
+    """Revoke all refresh tokens for a user (session invalidation)."""
+    count = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .update({"revoked_at": datetime.now(timezone.utc)})
+    )
+    db.commit()
+    return count
+
+
+def cleanup_expired_tokens(db: Session) -> int:
+    """Remove expired refresh tokens from the database."""
+    count = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.expires_at < datetime.now(timezone.utc))
+        .delete()
+    )
+    db.commit()
+    return count
+
+
 def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user = db.query(User).filter(User.username == username).first()
     if not user:
         return None
-    if not verify_password(password, user.password_hash):
+    if not user.is_active:
         return None
+    if not verify_password(password, user.password_hash):
+        # Track failed login
+        user.failed_login_count += 1
+        user.last_failed_login_at = datetime.now(timezone.utc)
+        db.commit()
+        return None
+    
+    # Reset failed login count on successful login
+    user.failed_login_count = 0
+    user.last_failed_login_at = None
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
     return user

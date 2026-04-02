@@ -4,9 +4,19 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_password_changed
 from app.models.user import User
-from app.schemas.group import AddMembersRequest, GroupMemberResponse, PeerGroupCreate, PeerGroupResponse, PeerGroupUpdate
+from app.schemas.group import (
+    AddMembersRequest,
+    GroupMemberResponse,
+    GroupNetworkAssignment,
+    GroupNetworkAssignmentCreate,
+    PeerGroupCreate,
+    PeerGroupResponse,
+    PeerGroupUpdate,
+)
 from app.services import group_service
 from app.services import iptables_service
+from app.models.group import GroupNetworkAccess
+from app.models.network import Network
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 
@@ -134,3 +144,100 @@ def get_group_members(
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
     return group_service.get_members(db, group_id)
+
+
+# --- Group Network Access Endpoints ---
+
+@router.get("/{group_id}/networks", response_model=list[GroupNetworkAssignment])
+def get_group_networks(
+    group_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """List all networks assigned to a group."""
+    group = group_service.get_group(db, group_id)
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    
+    assignments = db.query(GroupNetworkAccess).filter(
+        GroupNetworkAccess.group_id == group_id
+    ).all()
+    
+    result = []
+    for a in assignments:
+        network = db.query(Network).filter(Network.id == a.network_id).first()
+        if network:
+            result.append(GroupNetworkAssignment(
+                id=a.id,
+                network_id=a.network_id,
+                network_name=network.name,
+                subnet=network.subnet,
+                network_type=network.network_type,
+                action=a.action,
+            ))
+    return result
+
+
+@router.post("/{group_id}/networks", response_model=GroupNetworkAssignment, status_code=status.HTTP_201_CREATED)
+def assign_network_to_group(
+    group_id: int,
+    body: GroupNetworkAssignmentCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Assign a network to a group with allow/deny action."""
+    group = group_service.get_group(db, group_id)
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    
+    network = db.query(Network).filter(Network.id == body.network_id).first()
+    if not network:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network not found")
+    
+    # Check if assignment already exists
+    existing = db.query(GroupNetworkAccess).filter(
+        GroupNetworkAccess.group_id == group_id,
+        GroupNetworkAccess.network_id == body.network_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Network already assigned to this group")
+    
+    assignment = GroupNetworkAccess(
+        group_id=group_id,
+        network_id=body.network_id,
+        action=body.action,
+    )
+    db.add(assignment)
+    db.commit()
+    db.refresh(assignment)
+    
+    _apply_group_changes(db)
+    
+    return GroupNetworkAssignment(
+        id=assignment.id,
+        network_id=assignment.network_id,
+        network_name=network.name,
+        subnet=network.subnet,
+        network_type=network.network_type,
+        action=assignment.action,
+    )
+
+
+@router.delete("/{group_id}/networks/{network_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_network_from_group(
+    group_id: int,
+    network_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Remove a network assignment from a group."""
+    assignment = db.query(GroupNetworkAccess).filter(
+        GroupNetworkAccess.group_id == group_id,
+        GroupNetworkAccess.network_id == network_id,
+    ).first()
+    if not assignment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Network assignment not found")
+    
+    db.delete(assignment)
+    db.commit()
+    _apply_group_changes(db)

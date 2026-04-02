@@ -6,10 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.routers import audit, auth, connection_logs, dashboard, groups, networks, onboarding, peers, policies, system, users, version
+from app.routers.devices import router as devices_router
+from app.routers.client import router as client_router
 from app.services.auth_service import create_admin_user, create_server_config
 
 
@@ -42,7 +45,7 @@ app = FastAPI(
 # Middleware (order matters: outermost first)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,6 +64,8 @@ app.include_router(policies.router)
 app.include_router(system.router)
 app.include_router(audit.router)
 app.include_router(users.router)
+app.include_router(devices_router)
+app.include_router(client_router)
 app.include_router(connection_logs.router)
 app.include_router(version.router)
 
