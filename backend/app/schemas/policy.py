@@ -27,6 +27,7 @@ class PolicyResponse(BaseModel):
     direction: str
     action: str
     enabled: bool
+    position: int = 0
     created_at: datetime
     updated_at: datetime
 
