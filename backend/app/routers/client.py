@@ -33,8 +33,12 @@ from app.services.auth_service import (
     verify_token,
 )
 from app.services.audit_service import log as audit_log
+from app.services.connection_log_service import log_connection
 
 router = APIRouter(prefix="/api/v1/client", tags=["client-sync"])
+
+# Seconds since last_seen_at before a peer is considered disconnected
+_ACTIVE_CONNECTION_TTL_SECONDS = 180
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -95,7 +99,7 @@ def _get_or_create_device_and_peer(
     from app.schemas.peer import RoadWarriorCreate
 
     os_type, os_label = _detect_os(request.headers.get("user-agent"))
-    device_name = f"{user.username}-{os_label}"
+    device_name = user.username if os_label == "unknown" else f"{user.username}-{os_label}"
 
     # Find existing active device for this user
     device = (
@@ -157,6 +161,7 @@ def _os_to_device_type(os_type: str) -> str:
         "linux": "laptop",
         "android": "android",
         "ios": "ios",
+        "unknown": "user",
     }
     return mapping.get(os_type, "laptop")
 
@@ -172,6 +177,7 @@ def client_login(
     Authenticate client and return tokens.
     Auto-provisions a Device + WireGuard Peer on first login,
     named '<username>-<os>' based on User-Agent detection.
+    Rejects login if the user already has an active connection.
     """
     user = authenticate_user(db, body.username, body.password)
     if not user:
@@ -179,6 +185,36 @@ def client_login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
+
+    # Block login if user already has an active connection
+    existing_device = (
+        db.query(Device)
+        .filter(Device.user_id == user.id, Device.status == "active")
+        .order_by(Device.created_at.asc())
+        .first()
+    )
+    if existing_device and existing_device.last_seen_at:
+        last_seen = existing_device.last_seen_at
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - last_seen).total_seconds()
+        if age < _ACTIVE_CONNECTION_TTL_SECONDS:
+            existing_peer = db.query(Peer).filter(
+                Peer.device_id == existing_device.id,
+                Peer.is_enabled == True,
+            ).first()
+            log_connection(
+                db,
+                event_type="login_blocked",
+                message=f"Login attempt rejected: user '{user.username}' already has an active connection",
+                peer_id=existing_peer.id if existing_peer else None,
+                peer_name=existing_peer.name if existing_peer else None,
+                severity="warning",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User already has an active connection",
+            )
 
     # Auto-provision device + peer if needed
     device, peer = _get_or_create_device_and_peer(db, user, request)
@@ -188,7 +224,6 @@ def client_login(
         db,
         user.id,
         user_agent=request.headers.get("user-agent"),
-        ip_address=request.client.host if request.client else None,
     )
 
     response.set_cookie(
@@ -206,7 +241,6 @@ def client_login(
         user_id=user.id,
         target_type="user",
         target_id=user.id,
-        ip_address=request.client.host if request.client else None,
     )
 
     return ClientLoginResponse(

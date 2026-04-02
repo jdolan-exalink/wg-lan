@@ -54,7 +54,6 @@ def login(
         db,
         user.id,
         user_agent=request.headers.get("user-agent"),
-        ip_address=request.client.host if request.client else None,
     )
 
     response.set_cookie(
@@ -89,7 +88,6 @@ def login(
         user_id=user.id,
         target_type="user",
         target_id=user.id,
-        ip_address=request.client.host if request.client else None,
     )
     
     return TokenResponse(

@@ -24,7 +24,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Globe, Building2, ChevronDown, ChevronRight, Router, Server, Laptop, Smartphone, X, ArrowRight, Info, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Globe, Building2, ChevronDown, ChevronRight, Router, Server, Laptop, Smartphone, User, X, ArrowRight, Info, CheckCircle2 } from "lucide-react";
 import type { Network } from "@/types/network";
 import type { Peer } from "@/types/peer";
 
@@ -45,6 +45,7 @@ const peerTypeIcons: Record<string, React.ReactNode> = {
   android: <Smartphone className="h-3 w-3" />,
   router: <Router className="h-3 w-3" />,
   server: <Server className="h-3 w-3" />,
+  user: <User className="h-3 w-3" />,
 };
 
 function GatewayBadge({ peerId, allPeers }: { peerId: number | null; allPeers: Peer[] }) {

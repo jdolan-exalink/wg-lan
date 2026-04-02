@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, Users, ChevronDown, ChevronRight, Info, ArrowRight, Router, Laptop, Smartphone, Server, X, Check, Loader2, Globe, Shield, ShieldAlert } from "lucide-react";
+import { Plus, Trash2, Users, ChevronDown, ChevronRight, Info, ArrowRight, Router, Laptop, Smartphone, Server, User, X, Check, Loader2, Globe, Shield, ShieldAlert } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -42,6 +42,7 @@ const peerTypeIcons: Record<string, React.ReactNode> = {
   android: <Smartphone className="h-3 w-3" />,
   router: <Router className="h-3 w-3" />,
   server: <Server className="h-3 w-3" />,
+  user: <User className="h-3 w-3" />,
 };
 
 export function GroupsPage() {

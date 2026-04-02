@@ -167,6 +167,7 @@ const deviceIcons: Record<string, React.ReactNode> = {
   android: <Smartphone className="h-4 w-4" />,
   router: <Router className="h-4 w-4" />,
   server: <Server className="h-4 w-4" />,
+  user: <User className="h-4 w-4" />,
 };
 
 export function PeersPage() {

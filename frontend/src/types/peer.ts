@@ -1,5 +1,5 @@
 export type PeerType = "roadwarrior" | "branch_office" | "server";
-export type DeviceType = "laptop" | "ios" | "android" | "router" | "server";
+export type DeviceType = "laptop" | "ios" | "android" | "router" | "server" | "user";
 export type TunnelMode = "full" | "split";
 export type SyncStatus = "green" | "yellow" | "red";
 
