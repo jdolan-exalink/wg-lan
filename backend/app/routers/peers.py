@@ -177,7 +177,12 @@ def revoke_peer(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     _protect_system_peer(peer)
-    peer_service.revoke_peer(db, peer)
+    try:
+        peer_service.revoke_peer(db, peer)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to revoke peer: {str(e)}")
     audit_log(db, "peer.revoke", user_id=current_user.id, target_type="peer", target_id=peer_id, details={"name": peer.name})
     return {"message": f"Peer '{peer.name}' deleted successfully"}
 

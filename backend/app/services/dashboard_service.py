@@ -46,6 +46,7 @@ def get_peers_status(db: Session) -> list[PeerStatusItem]:
             id=peer.id,
             name=peer.name,
             peer_type=peer.peer_type,
+            device_type=peer.device_type,
             assigned_ip=peer.assigned_ip,
             is_enabled=peer.is_enabled,
             is_online=bool(st and st.is_online and peer.is_enabled),
@@ -53,6 +54,7 @@ def get_peers_status(db: Session) -> list[PeerStatusItem]:
             last_handshake=st.last_handshake if st else 0,
             rx_bytes=st.rx_bytes if st else 0,
             tx_bytes=st.tx_bytes if st else 0,
+            os=getattr(peer, 'os', None),
         ))
 
     return result

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { dashboardApi } from "@/api/dashboard";
-import { formatBytes, formatHandshake } from "@/lib/utils";
+import { formatBytes, formatBytesMB, formatHandshake } from "@/lib/utils";
 import {
   AreaChart,
   Area,
@@ -24,6 +24,8 @@ import {
   Users,
   WifiOff,
   Database,
+  Apple,
+  User,
 } from "lucide-react";
 import type { PeerType } from "@/types/peer";
 
@@ -36,8 +38,50 @@ interface BwPoint {
   tx: number; // bytes/s
 }
 
+// Device type icons
+const deviceIcons: Record<string, React.ReactNode> = {
+  laptop: <Laptop className="w-4 h-4" />,
+  ios: <Smartphone className="w-4 h-4" />,
+  android: <Smartphone className="w-4 h-4" />,
+  router: <Router className="w-4 h-4" />,
+  server: <Server className="w-4 h-4" />,
+  user: <User className="w-4 h-4" />,
+};
+
+// OS icons
+const osIcons: Record<string, React.ReactNode> = {
+  windows: (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M3 5.5l8-1.5v11l-8-1.5V5.5zm8 13l8-1.5v-11l-8 1.5v11zm0-14.5l8 1.5v11l-8-1.5V4zm0 14.5l8-1.5v-11l-8 1.5v11z"/>
+    </svg>
+  ),
+  macos: <Apple className="w-4 h-4" />,
+  linux: (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C6.48 2 2 4.69 2 8c0 1.65.67 3.14 1.76 4.26l-1.76 5.74L9 16v3c0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2v-3l2.82-1.26L20.24 12c1.09-1.12 1.76-2.61 1.76-4.26 0-3.31-4.48-6-10-6zm2 14h-4v-2h4v2zm-4-4V9l-2 1 2 1v5h4l-2-1z"/>
+    </svg>
+  ),
+  android: (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85c-.29-.15-.65-.06-.83.26l-1.59 2.76l-2.13-2.13c-.18-.18-.43-.28-.7-.28c-.28 0-.53.11-.71.29L8.52 9.68c-.18.18-.28.43-.28.71c0 .27.11.52.28.7l4.11 4.11c.18.18.43.28.7.28c.27 0 .52-.11.7-.28l3.47-6.08zM5.83 12.5c-.48.48-.77 1.12-.77 1.82c0 .7.29 1.34.77 1.82l2.17 2.17c.48.48 1.12.77 1.82.77c.7 0 1.34-.29 1.82-.77l2.17-2.17c.48-.48.77-1.12.77-1.82c0-.7-.29-1.34-.77-1.82l-2.17-2.17c-.48-.48-1.12-.77-1.82-.77c-.7 0-1.34.29-1.82.77L5.83 12.5z"/>
+    </svg>
+  ),
+  ios: <Smartphone className="w-4 h-4" />,
+};
+
 // ── Device icon resolution ───────────────────────
-function DeviceIcon({ peerType, name, className }: { peerType: PeerType; name: string; className?: string }) {
+function DeviceIcon({ peerType, os, name, deviceType, className }: { peerType: PeerType; os: string | null; name: string; deviceType?: string | null; className?: string }) {
+  // Use device_type if available
+  if (deviceType && deviceIcons[deviceType]) {
+    return <div className={className}>{deviceIcons[deviceType]}</div>;
+  }
+
+  // Use OS field if available
+  if (os && osIcons[os]) {
+    return <div className={className}>{osIcons[os]}</div>;
+  }
+
+  // Fallback to heuristics
   const n = name.toLowerCase();
 
   if (peerType === "branch_office") {
@@ -179,8 +223,8 @@ export function DashboardPage() {
   // ── Top peers bar chart data ─────────────────────
   const topTraffic = traffic.slice(0, 8).map((t) => ({
     name: t.peer_name.length > 12 ? t.peer_name.slice(0, 12) + "…" : t.peer_name,
-    RX: Math.round(t.rx_bytes / 1024),
-    TX: Math.round(t.tx_bytes / 1024),
+    RX: t.rx_bytes / (1024 * 1024),
+    TX: t.tx_bytes / (1024 * 1024),
   }));
 
   // ── Current BW (last point) ──────────────────────
@@ -227,12 +271,12 @@ export function DashboardPage() {
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-primary inline-block" />
                 <span className="text-outline">RX</span>
-                <span className="text-on-surface font-semibold">{formatBytes(latestBw.rx)}/s</span>
+                <span className="text-on-surface font-semibold">{formatBytesMB(latestBw.rx)}/s</span>
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-tertiary inline-block" />
                 <span className="text-outline">TX</span>
-                <span className="text-on-surface font-semibold">{formatBytes(latestBw.tx)}/s</span>
+                <span className="text-on-surface font-semibold">{formatBytesMB(latestBw.tx)}/s</span>
               </span>
             </div>
           )}
@@ -322,6 +366,7 @@ export function DashboardPage() {
                   tick={{ fontSize: 10, fill: "rgb(var(--c-muted))", fontFamily: "Space Grotesk" }}
                   tickLine={false}
                   axisLine={false}
+                  tickFormatter={(v) => v >= 1024 ? (v / 1024).toFixed(0) + "G" : v.toFixed(0) + "M"}
                 />
                 <Tooltip
                   contentStyle={{
@@ -332,7 +377,7 @@ export function DashboardPage() {
                     fontFamily: "Space Grotesk",
                     color: "rgb(var(--c-text))",
                   }}
-                  formatter={(v: number) => [`${v} KB`, ""]}
+                  formatter={(v: number) => [`${v >= 1024 ? (v / 1024).toFixed(1) + "GB" : v.toFixed(1) + "MB"}`, ""]}
                 />
                 <Legend
                   wrapperStyle={{ fontSize: 10, fontFamily: "Space Grotesk", color: "rgb(var(--c-muted))" }}
@@ -397,7 +442,7 @@ export function DashboardPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-surface-container-high/40">
-                {["Peer", "Type", "IP Address", "Status", "Last Handshake", "RX / TX"].map((h) => (
+                {["Peer", "Type", "IP Address", "OS", "Status", "Last Handshake", "RX / TX"].map((h) => (
                   <th
                     key={h}
                     className="text-left px-5 py-3 font-label text-[10px] uppercase tracking-widest text-outline font-semibold"
@@ -410,7 +455,7 @@ export function DashboardPage() {
             <tbody className="divide-y divide-outline-variant/8">
               {peerStatuses.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-14 text-center">
+                  <td colSpan={7} className="px-5 py-14 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <div className="w-12 h-12 rounded-xl bg-surface-container-high flex items-center justify-center">
                         <Users className="w-6 h-6 text-outline/40" />
@@ -432,7 +477,9 @@ export function DashboardPage() {
                         <div className="w-8 h-8 rounded-lg bg-surface-container-highest border border-outline-variant/10 flex items-center justify-center flex-shrink-0">
                           <DeviceIcon
                             peerType={p.peer_type}
+                            os={p.os}
                             name={p.name}
+                            deviceType={p.device_type}
                             className="w-4 h-4 text-outline"
                           />
                         </div>
@@ -451,6 +498,13 @@ export function DashboardPage() {
                     <td className="px-5 py-3.5">
                       <span className="font-mono text-[12px] text-primary bg-primary-container/8 px-2 py-0.5 rounded">
                         {p.assigned_ip}
+                      </span>
+                    </td>
+
+                    {/* OS */}
+                    <td className="px-5 py-3.5">
+                      <span className="font-label text-[11px] text-outline capitalize">
+                        {p.os ?? "—"}
                       </span>
                     </td>
 

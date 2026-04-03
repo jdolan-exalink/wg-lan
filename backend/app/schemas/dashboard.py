@@ -15,6 +15,7 @@ class PeerStatusItem(BaseModel):
     id: int
     name: str
     peer_type: str
+    device_type: str | None = None
     assigned_ip: str
     is_enabled: bool
     is_online: bool
@@ -22,6 +23,7 @@ class PeerStatusItem(BaseModel):
     last_handshake: int  # epoch seconds, 0 = never
     rx_bytes: int
     tx_bytes: int
+    os: str | None = None
 
 
 class TrafficItem(BaseModel):

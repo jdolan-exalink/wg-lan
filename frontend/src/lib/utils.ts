@@ -13,6 +13,15 @@ export function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
+export function formatBytesMB(bytes: number): string {
+  if (bytes === 0) return "0 MB";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(1)} GB`;
+  }
+  return `${mb.toFixed(1)} MB`;
+}
+
 export function formatHandshake(epoch: number): string {
   if (!epoch) return "Never";
   const now = Math.floor(Date.now() / 1000);

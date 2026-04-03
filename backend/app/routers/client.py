@@ -86,59 +86,64 @@ def _get_current_client_user(
     return user
 
 
-def _get_or_create_device_and_peer(
+def _get_or_create_peer(
     db: Session,
     user: User,
-    request: Request,
-) -> tuple[Device, Peer]:
+    request: Request | None = None,
+) -> Peer:
     """
-    Return the active Device+Peer for the user.
-    If they don't exist yet, auto-create them using username + OS.
+    Return the active Peer for the user.
+    If it doesn't exist yet, auto-create it using only the username.
+    The peer is identified by user_id - always the same peer for the same user.
     """
     from app.services.peer_service import create_roadwarrior
     from app.schemas.peer import RoadWarriorCreate
 
-    os_type, os_label = _detect_os(request.headers.get("user-agent"))
-    device_name = user.username if os_label == "unknown" else f"{user.username}-{os_label}"
-
-    # Find existing active device for this user
-    device = (
-        db.query(Device)
-        .filter(Device.user_id == user.id, Device.status == "active")
-        .order_by(Device.created_at.asc())
+    # Find existing active peer for this user (no OS in name)
+    peer = (
+        db.query(Peer)
+        .filter(
+            Peer.user_id == user.id,
+            Peer.is_enabled == True,
+            Peer.peer_type == "roadwarrior",
+        )
         .first()
     )
 
-    if device:
-        # Find associated peer
-        peer = db.query(Peer).filter(
-            Peer.device_id == device.id,
-            Peer.is_enabled == True,
-        ).first()
-        if peer:
-            return device, peer
+    if peer:
+        # Update OS if we can detect it from User-Agent
+        if request:
+            os_type, _ = _detect_os(request.headers.get("user-agent"))
+            if os_type != "unknown" and peer.os != os_type:
+                peer.os = os_type
+                db.commit()
+        return peer
 
-    # No device/peer yet — auto-create both
-    device = Device(
-        user_id=user.id,
-        device_name=device_name,
-        os_type=os_type,
-        status="active",
-    )
-    db.add(device)
-    db.flush()
-
+    # No peer yet — auto-create it (name = username only)
+    # Detect OS from User-Agent if available
+    os_type = "unknown"
+    if request:
+        os_type, _ = _detect_os(request.headers.get("user-agent"))
+    
+    device_type_map = {
+        "windows": "laptop",
+        "macos": "laptop",
+        "linux": "laptop",
+        "android": "android",
+        "ios": "ios",
+    }
+    
     peer_data = RoadWarriorCreate(
-        name=device_name,
-        device_type=_os_to_device_type(os_type),
+        name=user.username,
+        device_type=device_type_map.get(os_type, "user"),
         tunnel_mode="split",
         persistent_keepalive=25,
     )
     peer = create_roadwarrior(db, peer_data, created_by=user.id)
 
-    # Link peer to device
-    peer.device_id = device.id
+    # Link peer to user and set OS
     peer.user_id = user.id
+    peer.os = os_type if os_type != "unknown" else None
     db.commit()
     db.refresh(peer)
 
@@ -148,22 +153,10 @@ def _get_or_create_device_and_peer(
         user_id=user.id,
         target_type="peer",
         target_id=peer.id,
-        details={"device_name": device_name, "os_type": os_type},
+        details={"peer_name": user.username},
     )
 
-    return device, peer
-
-
-def _os_to_device_type(os_type: str) -> str:
-    mapping = {
-        "windows": "laptop",
-        "macos": "laptop",
-        "linux": "laptop",
-        "android": "android",
-        "ios": "ios",
-        "unknown": "user",
-    }
-    return mapping.get(os_type, "laptop")
+    return peer
 
 
 @router.post("/login", response_model=ClientLoginResponse)
@@ -175,9 +168,8 @@ def client_login(
 ):
     """
     Authenticate client and return tokens.
-    Auto-provisions a Device + WireGuard Peer on first login,
-    named '<username>-<os>' based on User-Agent detection.
-    Rejects login if the user already has an active connection.
+    Auto-provisions a WireGuard Peer on first login (named by username only).
+    Reuses existing peer if user already has one.
     """
     user = authenticate_user(db, body.username, body.password)
     if not user:
@@ -186,29 +178,28 @@ def client_login(
             detail="Invalid credentials",
         )
 
-    # Block login if user already has an active connection
-    existing_device = (
-        db.query(Device)
-        .filter(Device.user_id == user.id, Device.status == "active")
-        .order_by(Device.created_at.asc())
+    # Block login if user already has an active connection (check by peer updated_at)
+    existing_peer = (
+        db.query(Peer)
+        .filter(
+            Peer.user_id == user.id,
+            Peer.is_enabled == True,
+            Peer.peer_type == "roadwarrior",
+        )
         .first()
     )
-    if existing_device and existing_device.last_seen_at:
-        last_seen = existing_device.last_seen_at
+    if existing_peer and existing_peer.updated_at:
+        last_seen = existing_peer.updated_at
         if last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - last_seen).total_seconds()
         if age < _ACTIVE_CONNECTION_TTL_SECONDS:
-            existing_peer = db.query(Peer).filter(
-                Peer.device_id == existing_device.id,
-                Peer.is_enabled == True,
-            ).first()
             log_connection(
                 db,
                 event_type="login_blocked",
                 message=f"Login attempt rejected: user '{user.username}' already has an active connection",
-                peer_id=existing_peer.id if existing_peer else None,
-                peer_name=existing_peer.name if existing_peer else None,
+                peer_id=existing_peer.id,
+                peer_name=existing_peer.name,
                 severity="warning",
             )
             raise HTTPException(
@@ -216,8 +207,8 @@ def client_login(
                 detail="User already has an active connection",
             )
 
-    # Auto-provision device + peer if needed
-    device, peer = _get_or_create_device_and_peer(db, user, request)
+    # Auto-provision peer if needed (uses username only, no OS)
+    peer = _get_or_create_peer(db, user, request)
 
     access_token = create_access_token(user.id)
     refresh_token_str = create_refresh_token(
@@ -247,7 +238,7 @@ def client_login(
         access_token=access_token,
         refresh_token=refresh_token_str,
         expires_in=60 * settings.access_token_expire_minutes,
-        device_id=device.id,
+        device_id=peer.id,
         requires_registration=False,
     )
 
@@ -267,16 +258,16 @@ def get_full_config(
     if not server_cfg:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Server not configured")
 
-    # Get or auto-provision the device+peer for this user
-    device, peer = _get_or_create_device_and_peer(db, user, request)
+    # Get or auto-provision the peer for this user
+    peer = _get_or_create_peer(db, user, request)
 
     # Update last_seen
-    device.last_seen_at = datetime.now(timezone.utc)
+    peer.updated_at = datetime.now(timezone.utc)
     db.commit()
 
-    # Get allowed IPs from policy compiler
-    from app.services.policy_compiler import compile_allowed_cidrs
-    allowed_ips = compile_allowed_cidrs(db, peer.id)
+    # Get allowed IPs from policy compiler (includes VPN subnet + branch routes)
+    from app.services.policy_compiler import compile_client_allowed_ips
+    allowed_ips = compile_client_allowed_ips(db, peer.id)
     if not allowed_ips:
         # Fallback: all active networks
         networks = db.query(Network).filter(Network.is_active == True).all()
@@ -311,9 +302,6 @@ def get_full_config(
             "peer_id": peer.id,
             "peer_name": peer.name,
             "peer_type": peer.peer_type,
-            "device_id": device.id,
-            "device_name": device.device_name,
-            "os_type": device.os_type,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         },
     )
@@ -396,22 +384,21 @@ def report_client_status(
     user: User = Depends(_get_current_client_user),
     db: Session = Depends(get_db),
 ):
-    """Report device and tunnel status (heartbeat)."""
-    device = db.query(Device).filter(Device.id == body.device_id, Device.user_id == user.id).first()
-    if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    """Report peer tunnel status (heartbeat)."""
+    peer = db.query(Peer).filter(Peer.id == body.peer_id, Peer.user_id == user.id).first()
+    if not peer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     
-    device.last_seen_at = datetime.now(timezone.utc)
-    device.status = "active" if body.tunnel_status == "connected" else "inactive"
+    # Update updated_at as proxy for last_seen (we don't have a dedicated field)
+    peer.updated_at = datetime.now(timezone.utc)
     db.commit()
     
     audit_log(
         db,
         "client.status_report",
-        user_id=device.user_id,
-        actor_device_id=device.id,
-        target_type="device",
-        target_id=device.id,
+        user_id=user.id,
+        target_type="peer",
+        target_id=peer.id,
         details={
             "tunnel_status": body.tunnel_status,
             "bytes_sent": body.bytes_sent,
@@ -421,3 +408,15 @@ def report_client_status(
     )
     
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/settings")
+def get_client_settings(
+    db: Session = Depends(get_db),
+):
+    """Get client-facing settings (no auth required for basic config)."""
+    from app.models.server_config import ServerConfig
+    cfg = db.query(ServerConfig).first()
+    if not cfg:
+        return {"client_retry_enabled": False}
+    return {"client_retry_enabled": cfg.client_retry_enabled}

@@ -41,3 +41,21 @@ def onboarding_status(
         "completed": current_user.onboarding_completed,
         "must_change_password": current_user.must_change_password,
     }
+
+
+@router.post("/reset")
+def reset_onboarding(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reset onboarding to allow re-running the setup wizard. Admin only."""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can reset onboarding",
+        )
+
+    current_user.onboarding_completed = False
+    db.commit()
+
+    return {"message": "Onboarding reset successfully. User will be prompted to complete setup again."}

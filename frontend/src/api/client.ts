@@ -22,8 +22,13 @@ client.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
+      // Don't redirect or log error for /auth/me - expected when not logged in
+      const url = err.config?.url || "";
+      if (url === "/auth/me") {
+        return Promise.reject(err);
+      }
       // Don't redirect if already on login page
-      if (!window.location.pathname.startsWith('/login')) {
+      if (!window.location.pathname.startsWith("/login")) {
         window.location.href = "/login";
       }
     }

@@ -23,7 +23,7 @@ import { formatHandshake, formatBytes } from "@/lib/utils";
 import {
   Plus, Download, QrCode, RotateCcw, Trash2,
   Laptop, Smartphone, Router, Server, ChevronLeft, ChevronRight,
-  Building2, User,
+  Building2, User, Monitor, Apple,
 } from "lucide-react";
 import type { Peer } from "@/types/peer";
 
@@ -138,6 +138,55 @@ function QrCodeDialog({ peer, open, onOpenChange }: { peer: Peer | null; open: b
 
 type WizardType = "roadwarrior" | "branch_office" | null;
 
+// ─── Edit Peer Form ─────────────────────────────────────────────────────────
+
+function EditPeerForm({ peer, onSuccess, onCancel }: { peer: Peer; onSuccess: () => void; onCancel: () => void }) {
+  const { register, handleSubmit, formState: { isSubmitting } } = useForm({
+    defaultValues: {
+      name: peer.name,
+      description: peer.description || "",
+      device_type: peer.device_type || "laptop",
+    },
+  });
+
+  const onSubmit = async (data: { name: string; description: string; device_type: string }) => {
+    await peersApi.update(peer.id, {
+      name: data.name,
+      description: data.description || null,
+      device_type: data.device_type as "laptop" | "ios" | "android" | "server" | "router" | "user",
+    });
+    onSuccess();
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div>
+        <Label className="text-xs font-semibold">Name</Label>
+        <Input {...register("name")} className="mt-1" />
+      </div>
+      <div>
+        <Label className="text-xs font-semibold">Description</Label>
+        <Input {...register("description")} placeholder="Optional description" className="mt-1" />
+      </div>
+      <div>
+        <Label className="text-xs font-semibold">Device Type</Label>
+        <select {...register("device_type")} className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm mt-1">
+          <option value="laptop">Laptop</option>
+          <option value="ios">iOS</option>
+          <option value="android">Android</option>
+          <option value="server">Server</option>
+        </select>
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" disabled={isSubmitting} size="sm">
+          {isSubmitting ? "Saving…" : "Save"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 const rwSchema = z.object({
   name: z.string().min(1, "Required"),
   device_type: z.enum(["laptop", "ios", "android", "server"]),
@@ -170,6 +219,26 @@ const deviceIcons: Record<string, React.ReactNode> = {
   user: <User className="h-4 w-4" />,
 };
 
+const osIcons: Record<string, React.ReactNode> = {
+  windows: (
+    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M3 5.5l8-1.5v11l-8-1.5V5.5zm8 13l8-1.5v-11l-8 1.5v11zm0-14.5l8 1.5v11l-8-1.5V4zm0 14.5l8-1.5v-11l-8 1.5v11z"/>
+    </svg>
+  ),
+  macos: <Apple className="h-3.5 w-3.5" />,
+  linux: (
+    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C6.48 2 2 4.69 2 8c0 1.65.67 3.14 1.76 4.26l-1.76 5.74L9 16v3c0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2v-3l2.82-1.26L20.24 12c1.09-1.12 1.76-2.61 1.76-4.26 0-3.31-4.48-6-10-6zm2 14h-4v-2h4v2zm-4-4V9l-2 1 2 1v5h4l-2-1z"/>
+    </svg>
+  ),
+  android: (
+    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85c-.29-.15-.65-.06-.83.26l-1.59 2.76l-2.13-2.13c-.18-.18-.43-.28-.7-.28c-.28 0-.53.11-.71.29L8.52 9.68c-.18.18-.28.43-.28.71c0 .27.11.52.28.7l4.11 4.11c.18.18.43.28.7.28c.27 0 .52-.11.7-.28l3.47-6.08zM5.83 12.5c-.48.48-.77 1.12-.77 1.82c0 .7.29 1.34.77 1.82l2.17 2.17c.48.48 1.12.77 1.82.77c.7 0 1.34-.29 1.82-.77l2.17-2.17c.48-.48.77-1.12.77-1.82c0-.7-.29-1.34-.77-1.82l-2.17-2.17c-.48-.48-1.12-.77-1.82-.77c-.7 0-1.34.29-1.82.77L5.83 12.5z"/>
+    </svg>
+  ),
+  ios: <Smartphone className="h-3.5 w-3.5" />,
+};
+
 export function PeersPage() {
   const qc = useQueryClient();
   const [wizard, setWizard] = useState<WizardType>(null);
@@ -177,6 +246,7 @@ export function PeersPage() {
   const [editGroupsPeer, setEditGroupsPeer] = useState<Peer | null>(null);
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([]);
   const [revokePeer, setRevokePeer] = useState<Peer | null>(null);
+  const [editPeer, setEditPeer] = useState<Peer | null>(null);
 
   const { data: peers = [] } = useQuery({
     queryKey: ["peers"],
@@ -261,6 +331,7 @@ export function PeersPage() {
                 <th className="text-left px-4 py-2 font-medium w-10"></th>
                 <th className="text-left px-4 py-2 font-medium">Name</th>
                 <th className="text-left px-4 py-2 font-medium">Type</th>
+                <th className="text-left px-4 py-2 font-medium">OS</th>
                 <th className="text-left px-4 py-2 font-medium">VPN IP</th>
                 <th className="text-left px-4 py-2 font-medium">Shared LAN</th>
                 <th className="text-left px-4 py-2 font-medium">Tunnel</th>
@@ -270,7 +341,7 @@ export function PeersPage() {
             </thead>
             <tbody>
               {peers.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No peers yet — use a wizard above</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No peers yet — use a wizard above</td></tr>
               ) : [...peers].sort((a, b) => (a.is_system ? -1 : b.is_system ? 1 : 0)).map((p) => (
                 <tr key={p.id} className="border-b last:border-0 hover:bg-muted/20">
                   <td className="px-4 py-2">
@@ -283,6 +354,15 @@ export function PeersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2 text-muted-foreground capitalize">{p.peer_type.replace("_", " ")}</td>
+                  <td className="px-4 py-2">
+                    {p.os && osIcons[p.os] ? (
+                      <div className="flex items-center gap-1.5" title={p.os}>
+                        {osIcons[p.os]}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-xs">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 font-mono text-xs">{p.assigned_ip.split('/')[0]}</td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">
                     {p.peer_type === "branch_office" && p.remote_subnets && p.remote_subnets.length > 0 ? (
@@ -309,6 +389,14 @@ export function PeersPage() {
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Edit peer"
+                        onClick={() => setEditPeer(p)}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">edit</span>
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -434,6 +522,25 @@ export function PeersPage() {
               {revoke.isPending ? "Deleting..." : "Delete Peer"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Peer Dialog */}
+      <Dialog open={!!editPeer} onOpenChange={(v) => !v && setEditPeer(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Peer</DialogTitle>
+          </DialogHeader>
+          {editPeer && (
+            <EditPeerForm
+              peer={editPeer}
+              onSuccess={() => {
+                qc.invalidateQueries({ queryKey: ["peers"] });
+                setEditPeer(null);
+              }}
+              onCancel={() => setEditPeer(null)}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>

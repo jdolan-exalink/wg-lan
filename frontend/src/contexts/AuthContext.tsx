@@ -6,12 +6,27 @@ interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (username: string, password: string) => Promise<User>;
+  login: (username: string, password: string, authMethod?: string) => Promise<User>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+const AUTH_METHOD_COOKIE = "netloom_auth_method";
+
+function getAuthMethodFromCookie(): string {
+  if (typeof document === "undefined") return "auto";
+  const match = document.cookie.match(new RegExp("(^| )" + AUTH_METHOD_COOKIE + "=([^;]+)"));
+  return match ? match[2] : "auto";
+}
+
+function setAuthMethodCookie(method: string) {
+  if (typeof document === "undefined") return;
+  const expires = new Date();
+  expires.setFullYear(expires.getFullYear() + 1);
+  document.cookie = `${AUTH_METHOD_COOKIE}=${method};expires=${expires.toUTCString()};path=/;SameSite=Lax`;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -30,8 +45,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refresh().finally(() => setIsLoading(false));
   }, []);
 
-  const login = async (username: string, password: string): Promise<User> => {
-    const res = await authApi.login(username, password);
+  const login = async (username: string, password: string, authMethod?: string): Promise<User> => {
+    const method = authMethod || getAuthMethodFromCookie();
+    const res = await authApi.login(username, password, method);
+    setAuthMethodCookie(method);
     setUser(res.data);
     return res.data;
   };

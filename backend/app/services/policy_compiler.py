@@ -38,7 +38,7 @@ from app.models.user import UserNetworkAccess
 logger = logging.getLogger(__name__)
 
 
-def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
+def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = False) -> list[str]:
     """
     Return the list of CIDRs this peer is allowed to reach,
     based on group-to-group policies and peer-level overrides.
@@ -46,10 +46,13 @@ def compile_allowed_cidrs(db: Session, peer_id: int) -> list[str]:
     When firewall is DISABLED (default), returns ALL networks for everyone.
     When firewall is ENABLED, applies group policies (deny-first precedence).
     Only policies with enabled=True are evaluated.
+    
+    force_policies: when True, ignores firewall_enabled and always applies policies
     """
     # Step 0: Check global firewall switch — when OFF, allow everything
+    # But allow force_policies to override this
     config = db.query(ServerConfig).first()
-    if config is not None and not config.firewall_enabled:
+    if config is not None and not config.firewall_enabled and not force_policies:
         all_networks = db.query(Network).all()
         cidrs = sorted({n.subnet for n in all_networks})
         logger.info(f"Peer {peer_id}: firewall disabled — ALLOW-ALL, CIDRs: {cidrs}")
@@ -270,26 +273,31 @@ def compile_peer_routes(db: Session, peer_id: int) -> list[str]:
 def compile_client_allowed_ips(db: Session, peer_id: int) -> list[str]:
     """
     Compile AllowedIPs for a client config.
-    Always returns ALL networks + ALL branch routes + VPN subnet.
-    Policy enforcement is done server-side via iptables, so the client
-    config never needs to be re-downloaded when policies change.
+    If tunnel_mode is 'full', returns all networks (0.0.0.0/0, ::/0).
+    If tunnel_mode is 'split', returns only VPN subnet and allowed networks via policies.
+    Always respects tunnel_mode regardless of firewall state.
     """
+    from app.models.peer import Peer
+    
+    peer = db.query(Peer).filter(Peer.id == peer_id).first()
+    if not peer:
+        return []
+    
+    # Full tunnel: allow everything
+    if peer.tunnel_mode == "full":
+        return ["0.0.0.0/0", "::/0"]
+    
+    # Split tunnel: always use policy-based allowed networks
+    # Do NOT use the firewall-disabled shortcut - always respect policies
+    allowed_cidrs = compile_allowed_cidrs(db, peer_id, force_policies=True)
+    
+    # Always include VPN subnet
     from app.config import settings
-    from app.models.network import Network
-
     vpn_subnet = settings.subnet
-
-    # All known networks (LAN + VPN)
-    all_networks = db.query(Network).all()
-    network_cidrs = {n.subnet for n in all_networks}
-
-    # All branch-office routes (VPN IPs + remote subnets)
-    peer_routes_list = compile_peer_routes(db, peer_id)
-
-    all_cidrs = {vpn_subnet} | network_cidrs | set(peer_routes_list)
-    cleaned_cidrs = _remove_redundant_cidrs(all_cidrs)
-
-    return sorted(cleaned_cidrs)
+    if vpn_subnet not in allowed_cidrs:
+        allowed_cidrs.append(vpn_subnet)
+    
+    return sorted(allowed_cidrs)
 
 
 def _remove_redundant_cidrs(cidrs: set[str]) -> set[str]:

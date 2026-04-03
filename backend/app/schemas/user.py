@@ -42,11 +42,13 @@ class UserResponse(BaseModel):
     is_active: bool
     is_admin: bool
     must_change_password: bool
+    onboarding_completed: bool
     last_login_at: Optional[datetime] = None
     last_failed_login_at: Optional[datetime] = None
     failed_login_count: int = 0
     created_at: datetime
     updated_at: datetime
+    auth_source: str = "local"
 
     model_config = {"from_attributes": True}
 

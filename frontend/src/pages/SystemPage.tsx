@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { systemApi, type ServerConfigUpdate } from "@/api/system";
+import { systemApi, type ServerConfigUpdate, type ADConfigUpdate, type ADGroupMapping, type ADGroupMappingCreate, type ADGroupFromAD } from "@/api/system";
+import { groupsApi } from "@/api/networks";
 import { authApi } from "@/api/auth";
 import { useTheme } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
@@ -15,7 +16,478 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Copy, Check, KeyRound } from "lucide-react";
+import { Copy, Check, KeyRound, Users, FolderSync, Link, Plus, X, RefreshCw, Trash2 } from "lucide-react";
+
+// ─── AD Configuration Tab ───────────────────────────────────────────────────────
+
+function ADConfigurationTab() {
+  const qc = useQueryClient();
+  const { data: adConfig } = useQuery({
+    queryKey: ["ad-config"],
+    queryFn: () => systemApi.getADConfig().then((r) => r.data),
+  });
+
+  const { data: adGroups = [] } = useQuery({
+    queryKey: ["ad-groups-from-server"],
+    queryFn: () => systemApi.getADGroupsFromServer().then((r) => r.data.groups),
+    enabled: !!adConfig?.ad_enabled,
+  });
+
+  const { data: mappings = [] } = useQuery({
+    queryKey: ["ad-group-mappings"],
+    queryFn: () => systemApi.getADGroupMappings().then((r) => r.data),
+  });
+
+  const { data: netloomGroups = [] } = useQuery({
+    queryKey: ["netloom-groups"],
+    queryFn: () => groupsApi.list().then((r) => r.data),
+  });
+
+  const {
+    register: regAD,
+    handleSubmit: handleADSubmit,
+    setValue: setADValue,
+    watch: watchAD,
+    reset: resetAD,
+  } = useForm<ADConfigUpdate>();
+
+  useEffect(() => {
+    if (adConfig) {
+      resetAD({
+        ad_enabled: adConfig.ad_enabled,
+        ad_server: adConfig.ad_server ?? "",
+        ad_server_backup: adConfig.ad_server_backup ?? "",
+        ad_base_dn: adConfig.ad_base_dn ?? "",
+        ad_bind_dn: adConfig.ad_bind_dn ?? "",
+        ad_user_filter: adConfig.ad_user_filter ?? "",
+        ad_group_filter: adConfig.ad_group_filter ?? "",
+        ad_use_ssl: adConfig.ad_use_ssl,
+        ad_require_membership: adConfig.ad_require_membership,
+      });
+    }
+  }, [adConfig, resetAD]);
+
+  const updateAD = useMutation({
+    mutationFn: (data: ADConfigUpdate) => systemApi.updateADConfig(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ad-config"] }),
+  });
+
+  const testConnection = useMutation({
+    mutationFn: () => systemApi.testADConnection(),
+  });
+
+  const refreshADGroups = useMutation({
+    mutationFn: () => {
+      console.log("Refreshing AD groups...");
+      return systemApi.getADGroupsFromServer();
+    },
+    onSuccess: (res) => {
+      console.log("AD Groups response:", res.data);
+      qc.setQueryData(["ad-groups-from-server"], res.data.groups);
+    },
+    onError: (err) => {
+      console.log("AD Groups error:", err);
+    },
+  });
+
+  const createMapping = useMutation({
+    mutationFn: (data: ADGroupMappingCreate) => systemApi.createADGroupMapping(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ad-group-mappings"] }),
+  });
+
+  const deleteMapping = useMutation({
+    mutationFn: (id: number) => systemApi.deleteADGroupMapping(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ad-group-mappings"] }),
+  });
+
+  const [showMappingForm, setShowMappingForm] = useState(false);
+  const [newMapping, setNewMapping] = useState<{ ad_group_dn: string; ad_group_name: string; netloom_group_id: number } | null>(null);
+  const [mappingSuccess, setMappingSuccess] = useState(false);
+
+  const handleCreateMapping = () => {
+    if (newMapping) {
+      createMapping.mutate(newMapping, {
+        onSuccess: () => {
+          setShowMappingForm(false);
+          setNewMapping(null);
+          setMappingSuccess(true);
+          setTimeout(() => setMappingSuccess(false), 3000);
+        },
+      });
+    }
+  };
+
+  if (!adConfig) return <p className="text-sm text-on-surface-variant">Loading...</p>;
+
+  return (
+    <div className="space-y-6">
+      {/* AD Enable/Disable */}
+      <section className="bg-surface-container rounded-xl p-8 border border-outline-variant/10">
+        <header className="mb-6">
+          <h3 className="text-xl font-bold text-on-surface flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            Active Directory Integration
+          </h3>
+          <p className="text-sm text-on-surface-variant mt-1">
+            Configure LDAP/AD authentication and group mapping
+          </p>
+        </header>
+
+        <form onSubmit={handleADSubmit((d) => updateAD.mutate(d))} className="space-y-6">
+          {/* Enable AD */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setADValue("ad_enabled", !watchAD("ad_enabled"))}
+              className={cn(
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                watchAD("ad_enabled") ? "bg-primary" : "bg-surface-container-high"
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                  watchAD("ad_enabled") ? "translate-x-6" : "translate-x-1"
+                )}
+              />
+            </button>
+            <span className="text-sm font-medium">Enable Active Directory Authentication</span>
+          </div>
+
+          {watchAD("ad_enabled") && (
+            <>
+              {/* AD Server URL */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  AD Server URL (Primary)
+                </label>
+                <Input
+                  {...regAD("ad_server")}
+                  placeholder="ldaps://192.168.1.10:636"
+                  className="max-w-md"
+                />
+              </div>
+
+              {/* AD Server Backup URL */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  AD Server URL (Backup)
+                </label>
+                <Input
+                  {...regAD("ad_server_backup")}
+                  placeholder="ldaps://192.168.1.20:636 (optional)"
+                  className="max-w-md"
+                />
+              </div>
+
+              {/* Base DN */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  Base DN
+                </label>
+                <Input
+                  {...regAD("ad_base_dn")}
+                  placeholder="DC=empresa,DC=local"
+                  className="max-w-md"
+                />
+              </div>
+
+              {/* Bind DN - Formato DOMAIN\username */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  Bind Username (Service Account)
+                </label>
+                <Input
+                  {...regAD("ad_bind_dn")}
+                  placeholder="EMPRESA\Administrador"
+                  className="max-w-md"
+                />
+                <p className="text-[11px] text-on-surface-variant mt-1">Format: DOMAIN\username</p>
+              </div>
+
+              {/* Bind Password */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  Bind Password
+                </label>
+                <Input
+                  {...regAD("ad_bind_password")}
+                  type="password"
+                  placeholder="••••••••••••"
+                  className="max-w-md"
+                />
+              </div>
+
+              {/* User Filter - Opciones predefinidas */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  User Filter
+                </label>
+                <select
+                  {...regAD("ad_user_filter")}
+                  className="w-full max-w-md h-10 px-3 rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <option value="(sAMAccountName={username})">Default: sAMAccountName = username</option>
+                  <option value="(userPrincipalName={username})">UPN: userPrincipalName = username</option>
+                  <option value="(mail={username})">Email: mail = username</option>
+                  <option value="(employeeId={username})">Employee ID: employeeId = username</option>
+                  <option value="(sAMAccountName=*{username}*)">Contains: sAMAccountName contains username</option>
+                </select>
+                <p className="text-[11px] text-on-surface-variant mt-1">Use {"{username}"} placeholder</p>
+              </div>
+
+              {/* Use SSL */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setADValue("ad_use_ssl", !watchAD("ad_use_ssl"))}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                    watchAD("ad_use_ssl") ? "bg-primary" : "bg-surface-container-high"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                      watchAD("ad_use_ssl") ? "translate-x-6" : "translate-x-1"
+                    )}
+                  />
+                </button>
+                <span className="text-sm font-medium">Use LDAPS (SSL/TLS)</span>
+              </div>
+
+              {/* Require Membership */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setADValue("ad_require_membership", !watchAD("ad_require_membership"))}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                    watchAD("ad_require_membership") ? "bg-primary" : "bg-surface-container-high"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                      watchAD("ad_require_membership") ? "translate-x-6" : "translate-x-1"
+                    )}
+                  />
+                </button>
+                <span className="text-sm font-medium">Require AD Group Membership</span>
+                <span className="text-xs text-on-surface-variant">(Deny access if user not in mapped AD group)</span>
+              </div>
+
+              {/* Test Connection */}
+              <div className="flex items-center gap-4 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => testConnection.mutate()}
+                  disabled={testConnection.isPending}
+                >
+                  <Link className="h-4 w-4 mr-2" />
+                  {testConnection.isPending ? "Testing..." : "Test Connection"}
+                </Button>
+                {testConnection.isSuccess && (
+                  <span className={cn(
+                    "text-sm font-medium",
+                    testConnection.data.data?.success ? "text-secondary" : "text-error"
+                  )}>
+                    {testConnection.data.data?.success ? testConnection.data.data.message : testConnection.data.data?.error}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Save */}
+          <div className="flex items-center gap-4 pt-2">
+            <Button type="submit" disabled={updateAD.isPending}>
+              {updateAD.isPending ? "Saving..." : "Save Configuration"}
+            </Button>
+            {updateAD.isSuccess && <span className="text-sm text-secondary font-medium">Saved.</span>}
+            {updateAD.isError && <span className="text-sm text-error">Error saving.</span>}
+          </div>
+        </form>
+      </section>
+
+      {/* Group Mappings */}
+      {adConfig.ad_enabled && (
+        <section className="bg-surface-container rounded-xl p-8 border border-outline-variant/10">
+          <header className="mb-6 flex items-center justify-between">
+            <div>
+              <h3 className="text-xl font-bold text-on-surface flex items-center gap-2">
+                <FolderSync className="h-5 w-5 text-primary" />
+                Group Mappings
+              </h3>
+              <p className="text-sm text-on-surface-variant mt-1">
+                Map AD groups to NetLoom internal groups
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refreshADGroups.mutate()}
+                disabled={refreshADGroups.isPending}
+              >
+                <RefreshCw className={cn("h-4 w-4 mr-2", refreshADGroups.isPending && "animate-spin")} />
+                Refresh AD Groups
+              </Button>
+              <Button size="sm" onClick={() => setShowMappingForm(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Mapping
+              </Button>
+            </div>
+          </header>
+
+          {mappingSuccess && (
+            <div className="mb-4 p-3 bg-secondary/10 text-secondary rounded-lg text-sm">
+              Mapping created successfully!
+            </div>
+          )}
+
+          {/* Mappings Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-outline-variant/20">
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase">AD Group</th>
+                  <th className="text-left py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase">NetLoom Group</th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase">Enabled</th>
+                  <th className="text-center py-3 px-4 text-xs font-semibold text-on-surface-variant uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mappings.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-on-surface-variant">
+                      No mappings configured. Add a mapping to connect AD groups to NetLoom groups.
+                    </td>
+                  </tr>
+                ) : (
+                  mappings.map((m) => (
+                    <tr key={m.id} className="border-b border-outline-variant/10 hover:bg-surface-container-high/50">
+                      <td className="py-3 px-4">
+                        <div className="font-medium">{m.ad_group_name}</div>
+                        <div className="text-xs text-on-surface-variant font-mono">{m.ad_group_dn}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
+                          {m.netloom_group_name ?? `Group #${m.netloom_group_id}`}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={() => systemApi.updateADGroupMapping(m.id, { enabled: !m.enabled }).then(() => qc.invalidateQueries({ queryKey: ["ad-group-mappings"] }))}
+                          className={cn(
+                            "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+                            m.enabled ? "bg-primary" : "bg-surface-container-high"
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "inline-block h-3 w-3 transform rounded-full bg-white transition-transform",
+                              m.enabled ? "translate-x-5" : "translate-x-1"
+                            )}
+                          />
+                        </button>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-error hover:bg-error/10"
+                          onClick={() => deleteMapping.mutate(m.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* Add Mapping Dialog */}
+      <Dialog open={showMappingForm} onOpenChange={setShowMappingForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add AD Group Mapping</DialogTitle>
+            <DialogDescription>
+              Select an AD group and map it to a NetLoom group
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">AD Group</label>
+              <select
+                className="w-full h-10 px-3 rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary"
+                onChange={(e) => {
+                  const selected = adGroups.find(g => g.dn === e.target.value);
+                  if (selected) {
+                    setNewMapping({ ad_group_dn: selected.dn, ad_group_name: selected.name, netloom_group_id: 0 });
+                  }
+                }}
+                value={newMapping?.ad_group_dn ?? ""}
+              >
+                <option value="">Select an AD group...</option>
+                {adGroups.map((g) => (
+                  <option key={g.dn} value={g.dn}>{g.name} ({g.sam_name})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">NetLoom Group</label>
+              <select
+                className="w-full h-10 px-3 rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary"
+                onChange={(e) => {
+                  if (newMapping) {
+                    setNewMapping({ ...newMapping, netloom_group_id: parseInt(e.target.value) });
+                  }
+                }}
+                value={newMapping?.netloom_group_id ?? ""}
+              >
+                <option value="">Select a NetLoom group...</option>
+                {netloomGroups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowMappingForm(false); setNewMapping(null); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateMapping}
+              disabled={!newMapping?.ad_group_dn || !newMapping?.netloom_group_id || createMapping.isPending}
+            >
+              {createMapping.isPending ? "Creating..." : "Create Mapping"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Utilities ──────────────────────────────────────────────────────────────────
+
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
 
 // ─── Small reusable pieces ────────────────────────────────────────────────────
 
@@ -223,6 +695,7 @@ function PasswordChangeForm() {
 export function SystemPage() {
   const qc = useQueryClient();
   const { theme, toggleTheme } = useTheme();
+  const [activeTab, setActiveTab] = useState<"monitor" | "general" | "ad">("monitor");
 
   // ── Data queries ──────────────────────────────────────────────────────────
 
@@ -246,11 +719,13 @@ export function SystemPage() {
   // Rolling history for sparklines
   const [ramHistory, setRamHistory] = useState<number[]>([]);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
+  const [diskHistory, setDiskHistory] = useState<number[]>([]);
 
   useEffect(() => {
     if (!metrics) return;
     setRamHistory((prev) => [...prev.slice(-19), metrics.ram_percent]);
     setCpuHistory((prev) => [...prev.slice(-19), metrics.cpu_percent]);
+    setDiskHistory((prev) => [...prev.slice(-19), metrics.disk_percent]);
   }, [metrics]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -288,6 +763,8 @@ export function SystemPage() {
   const {
     register: regCfg,
     handleSubmit: handleCfgSubmit,
+    setValue: setCfgValue,
+    watch: watchCfg,
     formState: { isDirty: cfgDirty },
     reset: resetCfg,
   } = useForm<ServerConfigUpdate>();
@@ -296,8 +773,15 @@ export function SystemPage() {
     if (cfg)
       resetCfg({
         endpoint: cfg.endpoint,
+        listen_port: cfg.listen_port,
         dns: cfg.dns ?? "",
         mtu: cfg.mtu ?? 1420,
+        address: cfg.address,
+        vpn_domain: cfg.vpn_domain ?? "",
+        admin_port: cfg.admin_port,
+        api_http_port: cfg.api_http_port,
+        api_https_port: cfg.api_https_port,
+        api_http_enabled: cfg.api_http_enabled,
       });
   }, [cfg, resetCfg]);
 
@@ -305,8 +789,25 @@ export function SystemPage() {
 
   const [regenKeyDialog, setRegenKeyDialog] = useState(false);
   const [rebootDialog, setRebootDialog] = useState(false);
-  const [subnetDialog, setSubnetDialog] = useState<{ pending: string } | null>(null);
+  const [subnetDialog, setSubnetDialog] = useState<{ current: string; pending: string } | null>(null);
   const [portDialog, setPortDialog] = useState<{ pending: number } | null>(null);
+  const [backupDialog, setBackupDialog] = useState(false);
+  const [restoreDialog, setRestoreDialog] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+
+  const restoreBackup = useMutation({
+    mutationFn: async (file: File) => {
+      await systemApi.importBackup(file);
+    },
+    onSuccess: () => {
+      setRestoreDialog(false);
+      setRestoreFile(null);
+      alert("Backup restored. Please restart the service.");
+    },
+    onError: (err) => {
+      alert(`Restore failed: ${err}`);
+    },
+  });
 
   if (isLoading) return <p className="text-sm text-on-surface-variant">Loading…</p>;
   if (!cfg) return null;
@@ -317,48 +818,91 @@ export function SystemPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="pb-16 space-y-12">
+    <div className="pb-16 space-y-6">
+      {/* Tab Navigation */}
+      <div className="flex border-b border-outline-variant/20">
+        {[
+          { id: "monitor" as const, label: "System Monitor" },
+          { id: "general" as const, label: "General Settings" },
+          { id: "ad" as const, label: "Active Directory" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "px-6 py-3 text-sm font-medium border-b-2 transition-colors",
+              activeTab === tab.id
+                ? "border-primary text-primary"
+                : "border-transparent text-on-surface-variant hover:text-on-surface"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-        {/* ══ Section 1: Resource Monitor ══════════════════════════════════════ */}
+      {/* Tab Content */}
+      {activeTab === "monitor" && (
         <section id="monitor">
-          <header className="mb-6">
-            <h2 className="text-2xl font-bold text-on-surface tracking-tight">System Resource Monitor</h2>
-            <p className="text-on-surface-variant text-sm mt-1">
-              Real-time performance metrics of the loom infrastructure.
-            </p>
-          </header>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            {/* RAM card */}
-            <div className="bg-surface-container rounded-xl p-7 flex items-center justify-between border border-outline-variant/10 hover:bg-surface-container-high transition-colors">
-              <div className="space-y-0 min-w-0">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
-                  Host RAM Usage
+          {/* Server Status - full width */}
+          <div className="bg-surface-container rounded-xl p-5 md:p-7 border border-outline-variant/10 mb-6">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+              Server Status
+            </span>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mt-4">
+              {/* Database */}
+              <div className={cn(
+                "flex flex-col items-center gap-1.5 md:gap-2 p-3 md:p-4 rounded-xl",
+                dbOk ? "bg-tertiary/10" : "bg-error/10"
+              )}>
+                <div className={cn("w-2.5 h-2.5 md:w-3 md:h-3 rounded-full", dbOk ? "bg-tertiary animate-pulse" : "bg-error")} />
+                <span className={cn("text-base md:text-lg font-bold", dbOk ? "text-tertiary" : "text-error")}>
+                  {dbOk ? "OK" : "Error"}
                 </span>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-4xl font-extrabold text-primary tracking-tighter">
-                    {metrics ? `${metrics.ram_percent}%` : "—"}
-                  </span>
-                  <span className="text-sm text-on-surface-variant font-medium">
-                    {metrics ? `/ ${metrics.ram_total_gb} GB` : ""}
-                  </span>
-                </div>
-                <Sparkline data={ramHistory} colorClass="bg-primary" />
+                <span className="text-[10px] md:text-xs text-on-surface-variant">Database</span>
               </div>
-              <DonutGauge percent={metrics?.ram_percent ?? 0} colorClass="text-primary" icon="memory" />
-            </div>
 
+              {/* WireGuard */}
+              <div className={cn(
+                "flex flex-col items-center gap-1.5 md:gap-2 p-3 md:p-4 rounded-xl",
+                wgUp ? "bg-tertiary/10" : "bg-error/10"
+              )}>
+                <div className={cn("w-2.5 h-2.5 md:w-3 md:h-3 rounded-full", wgUp ? "bg-tertiary animate-pulse" : "bg-error")} />
+                <span className={cn("text-base md:text-lg font-bold", wgUp ? "text-tertiary" : "text-error")}>
+                  {wgUp ? "Up" : "Down"}
+                </span>
+                <span className="text-[10px] md:text-xs text-on-surface-variant">WireGuard</span>
+              </div>
+
+              {/* Tunnels */}
+              <div className="flex flex-col items-center gap-1.5 md:gap-2 p-3 md:p-4 rounded-xl bg-primary/10">
+                <span className="text-xl md:text-2xl font-bold text-primary">{health?.tunnel_count ?? 0}</span>
+                <span className="text-[10px] md:text-xs text-on-surface-variant">Tunnels</span>
+              </div>
+
+              {/* Uptime */}
+              <div className="flex flex-col items-center gap-1.5 md:gap-2 p-3 md:p-4 rounded-xl bg-secondary/10">
+                <span className="text-base md:text-lg font-bold text-secondary">
+                  {health?.uptime_seconds ? formatUptime(health.uptime_seconds) : "—"}
+                </span>
+                <span className="text-[10px] md:text-xs text-on-surface-variant">Uptime</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Resource cards - 3 equal columns */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* CPU card */}
-            <div className="bg-surface-container rounded-xl p-7 flex items-center justify-between border border-outline-variant/10 hover:bg-surface-container-high transition-colors">
+            <div className="bg-surface-container rounded-xl p-5 md:p-7 flex items-center justify-between border border-outline-variant/10 hover:bg-surface-container-high transition-colors">
               <div className="space-y-0 min-w-0">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
                   Host CPU Usage
                 </span>
                 <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-4xl font-extrabold text-secondary tracking-tighter">
+                  <span className="text-3xl md:text-4xl font-extrabold text-secondary tracking-tighter">
                     {metrics ? `${metrics.cpu_percent}%` : "—"}
                   </span>
-                  <span className="text-sm text-on-surface-variant font-medium">
+                  <span className="text-xs md:text-sm text-on-surface-variant font-medium">
                     {metrics ? `${metrics.cpu_count} Cores` : ""}
                   </span>
                 </div>
@@ -370,81 +914,78 @@ export function SystemPage() {
                 icon="developer_board"
               />
             </div>
-          </div>
 
-          {/* Status + quick actions row */}
-          <div className="flex flex-wrap gap-3">
-            <div
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium",
-                dbOk ? "bg-secondary/10 text-secondary" : "bg-error/10 text-error"
-              )}
-            >
-              <div className={cn("w-2 h-2 rounded-full", dbOk ? "bg-secondary animate-pulse" : "bg-error")} />
-              Database {dbOk ? "OK" : "Error"}
+            {/* RAM card */}
+            <div className="bg-surface-container rounded-xl p-5 md:p-7 flex items-center justify-between border border-outline-variant/10 hover:bg-surface-container-high transition-colors">
+              <div className="space-y-0 min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                  Host RAM Usage
+                </span>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-3xl md:text-4xl font-extrabold text-primary tracking-tighter">
+                    {metrics ? `${metrics.ram_percent}%` : "—"}
+                  </span>
+                  <span className="text-xs md:text-sm text-on-surface-variant font-medium">
+                    {metrics ? `/ ${metrics.ram_total_gb} GB` : ""}
+                  </span>
+                </div>
+                <Sparkline data={ramHistory} colorClass="bg-primary" />
+              </div>
+              <DonutGauge percent={metrics?.ram_percent ?? 0} colorClass="text-primary" icon="memory" />
             </div>
-            <div
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium",
-                wgUp ? "bg-secondary/10 text-secondary" : "bg-outline/10 text-outline"
-              )}
-            >
-              <div className={cn("w-2 h-2 rounded-full", wgUp ? "bg-secondary animate-pulse" : "bg-outline")} />
-              WireGuard {wgUp ? "Up" : "Down"}
+
+            {/* Disk card */}
+            <div className="bg-surface-container rounded-xl p-5 md:p-7 flex items-center justify-between border border-outline-variant/10 hover:bg-surface-container-high transition-colors">
+              <div className="space-y-0 min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                  Host Disk Usage
+                </span>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-3xl md:text-4xl font-extrabold text-tertiary tracking-tighter">
+                    {metrics ? `${metrics.disk_percent}%` : "—"}
+                  </span>
+                  <span className="text-xs md:text-sm text-on-surface-variant font-medium">
+                    {metrics ? `/ ${metrics.disk_total_gb} GB` : ""}
+                  </span>
+                </div>
+                <Sparkline data={diskHistory} colorClass="bg-tertiary" />
+              </div>
+              <DonutGauge
+                percent={metrics?.disk_percent ?? 0}
+                colorClass="text-tertiary"
+                icon="storage"
+              />
             </div>
-            <button
-              onClick={() => applyConfig.mutate()}
-              disabled={applyConfig.isPending}
-              className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-60"
-            >
-              <span
-                className="material-symbols-outlined text-base"
-                style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
-              >
-                sync
-              </span>
-              {applyConfig.isPending ? "Applying…" : "Apply Config"}
-            </button>
-            {applyConfig.isSuccess && (
-              <span className="text-sm text-secondary font-medium self-center">Applied.</span>
-            )}
           </div>
         </section>
+      )}
 
-        {/* ══ Two-column grid ═══════════════════════════════════════════════════ */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      {activeTab === "general" && (
+        <div className="grid grid-cols-1 gap-6">
+          {/* Server Config */}
+          <section className="bg-surface-container rounded-xl p-8 border border-outline-variant/10">
+            <header className="mb-7">
+              <h3 className="text-xl font-bold text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
+                  tune
+                </span>
+                General Settings
+              </h3>
+            </header>
 
-          {/* Left column — Security + General */}
-          <div className="lg:col-span-2 space-y-8">
-
-            {/* ── Section 2: Admin Password ─────────────────────────────────── */}
-            <section
-              id="security"
-              className="bg-surface-container rounded-xl p-8 border border-outline-variant/10"
-            >
-              <header className="mb-7">
-                <h3 className="text-xl font-bold text-on-surface flex items-center gap-2">
-                  <span
-                    className="material-symbols-outlined text-primary"
-                    style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
-                  >
-                    lock
-                  </span>
-                  Admin Password
-                </h3>
-              </header>
-
-              <PasswordChangeForm />
-
-              {/* Server public key */}
-              <div className="mt-8 pt-8 border-t border-surface-container">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-2 pl-1">
+            <form onSubmit={handleCfgSubmit((d) => updateCfg.mutate(d))} className="space-y-6">
+              {/* Server Public Key */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
                   Server Public Key
-                </p>
-                <div className="flex items-center gap-2 bg-surface rounded-lg px-4 py-3">
-                  <p className="font-mono text-sm break-all flex-1 text-on-surface">{cfg.public_key}</p>
-                  <CopyButton value={cfg.public_key} />
+                </label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 bg-surface-container-high px-4 py-3 rounded-lg font-mono text-sm text-on-surface break-all">
+                    {cfg?.public_key ?? "—"}
+                  </code>
+                  <CopyButton value={cfg?.public_key ?? ""} />
                   <button
+                    type="button"
                     onClick={() => setRegenKeyDialog(true)}
                     className="flex items-center gap-1.5 text-xs font-semibold text-outline hover:text-error transition-colors ml-1 whitespace-nowrap"
                   >
@@ -456,292 +997,286 @@ export function SystemPage() {
                   <p className="text-xs text-secondary font-medium mt-2 pl-1">Keypair regenerated.</p>
                 )}
               </div>
-            </section>
 
-            {/* ── Section 3: General Settings ──────────────────────────────── */}
-            <section
-              id="general"
-              className="bg-surface-container rounded-xl p-8 border border-outline-variant/10"
-            >
-              <header className="mb-7">
-                <h3 className="text-xl font-bold text-on-surface flex items-center gap-2">
+              {/* Endpoint */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  Endpoint (Public IP/DDNS)
+                </label>
+                <Input
+                  {...regCfg("endpoint")}
+                  placeholder="vpn.example.com or 203.0.113.1"
+                  className="max-w-md"
+                />
+              </div>
+
+              {/* Listen Port */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  Listen Port
+                </label>
+                <Input
+                  {...regCfg("listen_port")}
+                  type="number"
+                  className="max-w-32"
+                />
+              </div>
+
+              {/* DNS Servers */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  DNS Servers (optional)
+                </label>
+                <Input
+                  {...regCfg("dns")}
+                  placeholder="1.1.1.1, 8.8.8.8"
+                  className="max-w-md"
+                />
+                <p className="text-[11px] text-on-surface-variant mt-1">Comma-separated list of DNS servers for clients</p>
+              </div>
+
+              {/* MTU */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  MTU (optional)
+                </label>
+                <Input
+                  {...regCfg("mtu")}
+                  type="number"
+                  placeholder="1420"
+                  className="max-w-32"
+                />
+              </div>
+
+              {/* Subnet */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  VPN Subnet
+                </label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    {...regCfg("address")}
+                    placeholder="10.169.0.1/24"
+                    className="max-w-48 font-mono"
+                    onChange={(e) => {
+                      regCfg("address").onChange(e);
+                      setSubnetDialog({ current: cfg?.address ?? "", pending: e.target.value });
+                    }}
+                  />
+                  {subnetDialog && subnetDialog.pending !== subnetDialog.current && (
+                    <button
+                      type="button"
+                      onClick={() => setSubnetDialog(null)}
+                      className="text-xs text-error hover:underline"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-on-surface-variant mt-1">Changing this disconnects all clients</p>
+              </div>
+
+              {/* VPN Domain */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  VPN Domain
+                </label>
+                <Input
+                  {...regCfg("vpn_domain")}
+                  placeholder="example.vpn"
+                  className="max-w-md"
+                />
+                <p className="text-[11px] text-on-surface-variant mt-1">Used for future hostname implementations</p>
+              </div>
+
+              {/* Admin Port */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  Dashboard Admin Port
+                </label>
+                <Input
+                  {...regCfg("admin_port")}
+                  type="number"
+                  className="max-w-32"
+                />
+              </div>
+
+              {/* API HTTP Port */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  API HTTP Port
+                </label>
+                <Input
+                  {...regCfg("api_http_port")}
+                  type="number"
+                  className="max-w-32"
+                />
+              </div>
+
+              {/* API HTTP Enabled */}
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
+                  Enable HTTP API
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setCfgValue("api_http_enabled", !watchCfg("api_http_enabled"))}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                    watchCfg("api_http_enabled") ? "bg-primary" : "bg-surface-container-high"
+                  )}
+                >
                   <span
-                    className="material-symbols-outlined text-primary"
-                    style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
-                  >
-                    tune
-                  </span>
-                  General Settings
-                </h3>
-              </header>
+                    className={cn(
+                      "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                      watchCfg("api_http_enabled") ? "translate-x-6" : "translate-x-1"
+                    )}
+                  />
+                </button>
+              </div>
 
-              <form onSubmit={handleCfgSubmit((d) => updateCfg.mutate(d))} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* API HTTPS Port */}
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">
+                  API HTTPS Port
+                </label>
+                <Input
+                  {...regCfg("api_https_port")}
+                  type="number"
+                  className="max-w-32"
+                />
+              </div>
 
-                  {/* Endpoint */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant pl-1">
-                      Public Endpoint
-                    </label>
-                    <Input
-                      placeholder="vpn.example.com"
-                      className="h-12 bg-surface border-none font-mono text-primary font-bold focus-visible:ring-primary"
-                      {...regCfg("endpoint")}
-                    />
-                    <p className="text-[11px] text-on-surface-variant pl-1">
-                      Hostname or IP peers use to connect
-                    </p>
-                  </div>
-
-                  {/* DNS */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant pl-1">
-                      DNS
-                    </label>
-                    <Input
-                      placeholder="1.1.1.1, 8.8.8.8"
-                      className="h-12 bg-surface border-none focus-visible:ring-primary"
-                      {...regCfg("dns")}
-                    />
-                  </div>
-
-                  {/* MTU */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant pl-1">
-                      MTU
-                    </label>
-                    <Input
-                      type="number"
-                      placeholder="1420"
-                      className="h-12 bg-surface border-none focus-visible:ring-primary"
-                      {...regCfg("mtu", { valueAsNumber: true })}
-                    />
-                  </div>
-
-                  {/* VPN Subnet (read+prompt edit) */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant pl-1">
-                      VPN Subnet
-                    </label>
-                    <div className="flex items-center gap-2 h-12 bg-surface rounded-lg px-4">
-                      <span className="font-mono text-sm text-on-surface flex-1">{cfg.address}</span>
-                      <button
-                        type="button"
-                        className="text-xs font-semibold text-outline hover:text-primary transition-colors"
-                        onClick={() => {
-                          const v = prompt("New VPN Subnet (e.g. 100.169.0.1/16):", cfg.address);
-                          if (v && v !== cfg.address) setSubnetDialog({ pending: v });
-                        }}
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Listen Port (read+prompt edit) */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant pl-1">
-                      Listen Port
-                    </label>
-                    <div className="flex items-center gap-2 h-12 bg-surface rounded-lg px-4">
-                      <span className="font-mono text-sm text-on-surface flex-1">
-                        {cfg.listen_port}/udp
-                      </span>
-                      <button
-                        type="button"
-                        className="text-xs font-semibold text-outline hover:text-primary transition-colors"
-                        onClick={() => {
-                          const v = prompt(
-                            "New listen port (1–65535):",
-                            String(cfg.listen_port)
-                          );
-                          if (v) {
-                            const p = parseInt(v, 10);
-                            if (
-                              !isNaN(p) &&
-                              p >= 1 &&
-                              p <= 65535 &&
-                              p !== cfg.listen_port
-                            )
-                              setPortDialog({ pending: p });
-                          }
-                        }}
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* Theme toggle */}
-                <div className="space-y-2 pt-2">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant pl-1 block">
-                    UI Theme
-                  </label>
-                  <div className="flex bg-surface p-1 rounded-xl gap-1 max-w-xs">
-                    <button
-                      type="button"
-                      onClick={() => theme === "dark" && toggleTheme()}
-                      className={cn(
-                        "flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all",
-                        theme === "light"
-                          ? "bg-white shadow-sm text-primary"
-                          : "text-on-surface-variant hover:bg-white/30"
-                      )}
-                    >
-                      <span
-                        className="material-symbols-outlined text-base"
-                        style={{
-                          fontVariationSettings:
-                            theme === "light"
-                              ? "'FILL' 1, 'wght' 400"
-                              : "'FILL' 0, 'wght' 300",
-                        }}
-                      >
-                        light_mode
-                      </span>
-                      Light
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => theme === "light" && toggleTheme()}
-                      className={cn(
-                        "flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all",
-                        theme === "dark"
-                          ? "bg-on-surface/90 shadow-sm text-primary-container"
-                          : "text-on-surface-variant hover:bg-white/30"
-                      )}
-                    >
-                      <span
-                        className="material-symbols-outlined text-base"
-                        style={{
-                          fontVariationSettings:
-                            theme === "dark"
-                              ? "'FILL' 1, 'wght' 400"
-                              : "'FILL' 0, 'wght' 300",
-                        }}
-                      >
-                        dark_mode
-                      </span>
-                      Dark
-                    </button>
-                  </div>
-                </div>
-
-                {/* Save */}
-                <div className="flex items-center gap-4 pt-2">
+              {/* Theme Toggle */}
+              <div className="flex items-center gap-4">
+                <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Theme</span>
+                <div className="flex bg-surface-container rounded-full p-1">
                   <button
-                    type="submit"
-                    disabled={updateCfg.isPending || !cfgDirty}
-                    className="bg-primary text-on-primary font-bold py-3 px-8 rounded-full shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
+                    type="button"
+                    onClick={() => theme !== "light" && toggleTheme()}
+                    className={cn(
+                      "flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all",
+                      theme === "light" ? "bg-surface-container-high text-on-surface" : "text-on-surface-variant"
+                    )}
                   >
-                    {updateCfg.isPending ? "Saving…" : "Save Changes"}
+                    <span
+                      className="material-symbols-outlined text-base"
+                      style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
+                    >
+                      light_mode
+                    </span>
+                    Light
                   </button>
-                  {updateCfg.isSuccess && (
-                    <span className="text-sm text-secondary font-medium">Saved.</span>
-                  )}
-                  {updateCfg.isError && (
-                    <span className="text-sm text-error">Error saving.</span>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => theme !== "dark" && toggleTheme()}
+                    className={cn(
+                      "flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all",
+                      theme === "dark" ? "bg-surface-container-high text-on-surface" : "text-on-surface-variant"
+                    )}
+                  >
+                    <span
+                      className="material-symbols-outlined text-base"
+                      style={{
+                        fontVariationSettings:
+                          theme === "dark" ? "'FILL' 1, 'wght' 400" : "'FILL' 0, 'wght' 300",
+                      }}
+                    >
+                      dark_mode
+                    </span>
+                    Dark
+                  </button>
                 </div>
-              </form>
-            </section>
-          </div>
+              </div>
 
-          {/* ── Right column: Backup & Restore ───────────────────────────── */}
-          <aside
-            id="backup"
-            className="bg-surface-container rounded-xl p-8 border border-outline-variant/10 flex flex-col"
-          >
+              {/* Save */}
+              <div className="flex items-center gap-4 pt-2">
+                <button
+                  type="submit"
+                  disabled={updateCfg.isPending || !cfgDirty}
+                  className="bg-primary text-on-primary font-bold py-3 px-8 rounded-full shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
+                >
+                  {updateCfg.isPending ? "Saving…" : "Save Changes"}
+                </button>
+                {updateCfg.isSuccess && <span className="text-sm text-secondary font-medium">Saved.</span>}
+                {updateCfg.isError && <span className="text-sm text-error">Error saving.</span>}
+              </div>
+            </form>
+          </section>
+
+          {/* Backup & Restore - full width */}
+          <section className="bg-surface-container rounded-xl p-8 border border-outline-variant/10">
             <header className="mb-6">
               <h3 className="text-xl font-bold text-on-surface flex items-center gap-2">
-                <span
-                  className="material-symbols-outlined text-primary"
-                  style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
-                >
+                <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
                   cloud_upload
                 </span>
                 Backup &amp; Restore
               </h3>
             </header>
 
-            <div className="space-y-7 flex-1">
-              {/* Export backup */}
-              <div className="p-5 bg-surface-container-low rounded-xl space-y-3">
-                <div>
-                  <h4 className="text-sm font-bold text-on-surface">System Backup</h4>
-                  <p className="text-xs text-on-surface-variant mt-0.5">
-                    Downloads the full database with all configurations.
-                  </p>
-                </div>
-                <button
-                  onClick={() => exportBackup.mutate()}
-                  disabled={exportBackup.isPending}
-                  className="w-full py-3 bg-white dark:bg-surface-container border border-primary/20 text-primary text-sm font-bold rounded-lg hover:bg-primary hover:text-white dark:hover:bg-primary transition-all flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  <span
-                    className="material-symbols-outlined text-base"
-                    style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
-                  >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Download Backup */}
+              <div className="text-center">
+                <div className="bg-surface-container-high rounded-xl p-6 mb-4">
+                  <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
                     download
                   </span>
-                  {exportBackup.isPending ? "Preparing…" : "Generate Full Backup"}
-                </button>
-                {exportBackup.isSuccess && (
-                  <p className="text-xs text-secondary font-medium text-center">Download started.</p>
-                )}
+                </div>
+                <h4 className="font-bold text-on-surface mb-2">Download Backup</h4>
+                <p className="text-sm text-on-surface-variant mb-4">Export database and .env</p>
+                <Button onClick={() => setBackupDialog(true)} variant="outline">
+                  Download Backup
+                </Button>
               </div>
 
-              {/* Restore */}
-              <div className="space-y-3">
-                <div>
-                  <h4 className="text-sm font-bold text-on-surface">Restore System</h4>
-                  <p className="text-xs text-on-surface-variant mt-0.5">
-                    Roll back to a previous configuration state.
-                  </p>
+              {/* Restore Backup */}
+              <div className="text-center">
+                <div className="bg-surface-container-high rounded-xl p-6 mb-4">
+                  <span className="material-symbols-outlined text-4xl text-tertiary" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
+                    upload
+                  </span>
                 </div>
-                <label
-                  htmlFor="restore-file"
-                  className="border-2 border-dashed border-outline-variant/30 rounded-xl p-7 flex flex-col items-center justify-center text-center gap-3 group hover:border-primary transition-colors cursor-pointer"
-                >
-                  <div className="w-12 h-12 bg-surface-container rounded-full flex items-center justify-center text-on-surface-variant group-hover:text-primary transition-colors">
-                    <span
-                      className="material-symbols-outlined text-3xl"
-                      style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
-                    >
-                      upload_file
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-on-surface">Drop backup file</p>
-                    <p className="text-xs text-on-surface-variant">or click to browse — .db files only</p>
-                  </div>
-                  <input id="restore-file" type="file" accept=".db" className="hidden" onChange={() => {}} />
+                <h4 className="font-bold text-on-surface mb-2">Restore Backup</h4>
+                <p className="text-sm text-on-surface-variant mb-4">Upload a backup file</p>
+                <label className="inline-flex items-center gap-2 px-4 py-2 bg-tertiary text-white text-sm font-bold rounded-full cursor-pointer hover:opacity-90 transition-opacity">
+                  <span>Choose File</span>
+                  <input
+                    id="restore-file"
+                    type="file"
+                    accept=".db"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setRestoreFile(file);
+                    }}
+                  />
                 </label>
-                <p className="text-[11px] text-on-surface-variant text-center">
+                {restoreFile && (
+                  <Button
+                    onClick={() => setRestoreDialog(true)}
+                    variant="outline"
+                    className="ml-2"
+                  >
+                    Restore
+                  </Button>
+                )}
+                <p className="text-[11px] text-on-surface-variant text-center mt-2">
                   Restore requires a service restart to take effect.
                 </p>
               </div>
             </div>
 
             {/* Reboot WG */}
-            <div className="mt-8 pt-6 border-t border-surface-container">
+            <div className="mt-8 pt-6 border-t border-outline-variant/20">
               <div className="flex items-center justify-between p-4 bg-tertiary/10 rounded-xl">
                 <div className="flex items-center gap-3">
-                  <span
-                    className="material-symbols-outlined text-tertiary"
-                    style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}
-                  >
+                  <span className="material-symbols-outlined text-tertiary" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
                     warning
                   </span>
                   <div>
-                    <p className="text-xs font-bold text-tertiary uppercase tracking-wide">
-                      Advanced Action
-                    </p>
-                    <p className="text-[10px] text-tertiary/80 leading-tight">
-                      Disconnects all peers briefly
-                    </p>
+                    <p className="text-xs font-bold text-tertiary uppercase tracking-wide">Advanced Action</p>
+                    <p className="text-[10px] text-tertiary/80 leading-tight">Disconnects all peers briefly</p>
                   </div>
                 </div>
                 <button
@@ -753,15 +1288,43 @@ export function SystemPage() {
                 </button>
               </div>
               {wgRestart.isSuccess && (
-                <p className="text-xs text-secondary font-medium text-center mt-2">
-                  WireGuard restarted.
-                </p>
+                <p className="text-xs text-secondary font-medium text-center mt-2">WireGuard restarted.</p>
               )}
             </div>
-          </aside>
-        </div>
+          </section>
 
-      {/* ── Confirmation dialogs ─────────────────────────────────────────────── */}
+          {/* Reset Onboarding */}
+          <section className="bg-surface-container rounded-xl p-8 border border-outline-variant/10">
+            <header className="mb-6">
+              <h3 className="text-xl font-bold text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
+                  refresh
+                </span>
+                Reset Setup Wizard
+              </h3>
+            </header>
+            <p className="text-sm text-on-surface-variant mb-4">
+              Reset the setup wizard to allow re-running the initial configuration. The user will be prompted to complete the setup again.
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (confirm("Are you sure you want to reset the setup wizard?")) {
+                  systemApi.resetOnboarding().then(() => {
+                    window.location.reload();
+                  });
+                }
+              }}
+            >
+              Reset Onboarding
+            </Button>
+          </section>
+        </div>
+      )}
+
+      {activeTab === "ad" && (
+        <ADConfigurationTab />
+      )}
 
       <ConfirmDialog
         open={regenKeyDialog}
@@ -822,6 +1385,40 @@ export function SystemPage() {
           if (portDialog) updateCfg.mutate({ listen_port: portDialog.pending });
         }}
         confirmLabel="Change Port"
+        danger
+      />
+
+      <ConfirmDialog
+        open={backupDialog}
+        onOpenChange={setBackupDialog}
+        title="Download Backup"
+        description="This will export the database file and .env configuration as a backup."
+        onConfirm={() => {
+          setBackupDialog(false);
+          systemApi.exportBackup();
+        }}
+        confirmLabel="Download"
+      />
+
+      <ConfirmDialog
+        open={restoreDialog}
+        onOpenChange={(v) => {
+          setRestoreDialog(v);
+          if (!v) setRestoreFile(null);
+        }}
+        title="Restore Backup"
+        description={
+          <>
+            <span className="text-error font-bold">Warning:</span> Restoring a backup will replace all current data. 
+            This action cannot be undone.
+            <br /><br />
+            Selected file: <code className="font-mono">{restoreFile?.name}</code>
+          </>
+        }
+        onConfirm={() => {
+          if (restoreFile) restoreBackup.mutate(restoreFile);
+        }}
+        confirmLabel="Restore"
         danger
       />
     </div>

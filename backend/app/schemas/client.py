@@ -11,6 +11,7 @@ class ClientLoginRequest(BaseModel):
     username: str = Field(..., min_length=1)
     password: str = Field(..., min_length=1)
     device_fingerprint: Optional[str] = None
+    os: Optional[str] = None  # Client-reported OS: windows, macos, linux, android, ios
 
 
 class ClientLoginResponse(BaseModel):
@@ -76,7 +77,7 @@ class ConfigVersionResponse(BaseModel):
 # ── Client Status ─────────────────────────────────────────────
 
 class ClientStatusRequest(BaseModel):
-    device_id: int
+    peer_id: int
     tunnel_status: str = Field(..., pattern="^(connected|disconnected|connecting)$")
     last_handshake: Optional[datetime] = None
     bytes_sent: Optional[int] = None

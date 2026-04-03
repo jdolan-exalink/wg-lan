@@ -2,8 +2,8 @@ import client from "./client";
 import type { User } from "@/types/auth";
 
 export const authApi = {
-  login: (username: string, password: string) =>
-    client.post<User>("/auth/login", { username, password }),
+  login: (username: string, password: string, authMethod: string = "auto") =>
+    client.post<User>("/auth/login", { username, password, auth_method: authMethod }),
 
   logout: () => client.post("/auth/logout"),
 

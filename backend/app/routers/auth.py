@@ -1,4 +1,5 @@
 import secrets
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.server_config import ServerConfig
 from app.models.user import User
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -25,6 +27,7 @@ from app.services.auth_service import (
     verify_password,
     verify_refresh_token,
 )
+from app.services import ad_service, ad_mapping_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -42,8 +45,64 @@ def login(
     response: Response,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
-    user = authenticate_user(db, body.username, body.password)
-    if not user:
+    cfg = db.query(ServerConfig).first()
+    ad_enabled = cfg.ad_enabled if cfg else False
+    auth_method = body.auth_method or "auto"
+
+    user = None
+    auth_source = "local"
+
+    use_ad = ad_enabled and auth_method in ("auto", "ad")
+    use_local = not ad_enabled or auth_method in ("local", "auto")
+
+    if use_ad:
+        cfg = db.query(ServerConfig).first()
+        require_membership = cfg.ad_require_membership if cfg else True
+        
+        try:
+            ad_result = ad_service.authenticate_ad(db, body.username, body.password)
+            if ad_result:
+                auth_source = "ad"
+                netloom_groups = ad_mapping_service.map_ad_groups_to_netloom(db, ad_result.get("ad_groups", []))
+                
+                if require_membership and not netloom_groups:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not member of any mapped AD group",
+                    )
+                
+                user = db.query(User).filter(User.username == body.username).first()
+                if not user:
+                    user = User(
+                        username=body.username,
+                        password_hash=hash_password(""),
+                        is_active=True,
+                    )
+                    db.add(user)
+                    db.commit()
+                    db.refresh(user)
+                if not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User account is inactive",
+                    )
+                user.last_login_at = datetime.now(timezone.utc)
+                user.auth_source = "ad"
+                db.commit()
+        except ad_service.ADAuthenticationError:
+            if auth_method == "ad":
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid AD credentials",
+                )
+            use_local = True
+
+    if use_local and not user:
+        user = authenticate_user(db, body.username, body.password)
+        if user:
+            auth_source = "local"
+
+    if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

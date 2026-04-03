@@ -1,7 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
-import { systemApi } from "@/api/system";
 import { versionApi } from "@/api/version";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSidebar } from "@/contexts/SidebarContext";
@@ -25,29 +24,11 @@ const navItems = [
   { to: "/system", label: "System", icon: "settings" },
 ];
 
-function StatusDot({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <div
-      className={cn(
-        "w-2 h-2 rounded-full flex-shrink-0 transition-colors",
-        ok ? "bg-tertiary" : "bg-error"
-      )}
-      title={label}
-    />
-  );
-}
-
 export function Sidebar() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { collapsed, toggle } = useSidebar();
   const navigate = useNavigate();
-
-  const { data: health } = useQuery({
-    queryKey: ["health"],
-    queryFn: () => systemApi.health().then((r) => r.data),
-    refetchInterval: 10_000,
-  });
 
   const { data: version } = useQuery({
     queryKey: ["version"],
@@ -56,7 +37,11 @@ export function Sidebar() {
   });
 
   const handleLogout = async () => {
-    await logout();
+    try {
+      await logout();
+    } catch {
+      // Ignore errors, just navigate to login
+    }
     navigate("/login");
   };
 
@@ -167,33 +152,6 @@ export function Sidebar() {
           ))}
         </div>
       </nav>
-
-      {/* ── Service status ── */}
-      <div className={cn("flex-shrink-0 pb-2", collapsed ? "px-3" : "px-4")}>
-        {collapsed ? (
-          <div className="flex flex-col items-center gap-2 py-2">
-            <StatusDot ok={health?.db === "ok"} label={`DB: ${health?.db ?? "?"}`} />
-            <StatusDot ok={health?.wg_interface === "up"} label={`WG: ${health?.wg_interface ?? "?"}`} />
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
-              <StatusDot ok={health?.db === "ok"} label="Database" />
-              <span className="font-label text-[10px] uppercase tracking-widest text-outline">
-                DB&thinsp;·&thinsp;
-                <span className="text-on-surface-variant normal-case">{health?.db ?? "—"}</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
-              <StatusDot ok={health?.wg_interface === "up"} label="WireGuard" />
-              <span className="font-label text-[10px] uppercase tracking-widest text-outline">
-                WG&thinsp;·&thinsp;
-                <span className="text-on-surface-variant normal-case">{health?.wg_interface ?? "—"}</span>
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* ── Divider ── */}
       <div className="mx-3 h-px bg-outline-variant/20 flex-shrink-0" />

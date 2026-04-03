@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -18,10 +18,30 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>;
 
+const AUTH_METHOD_COOKIE = "netloom_auth_method";
+
+function getSavedAuthMethod(): string {
+  if (typeof document === "undefined") return "auto";
+  const match = document.cookie.match(new RegExp("(^| )" + AUTH_METHOD_COOKIE + "=([^;]+)"));
+  return match ? match[2] : "auto";
+}
+
+function setSavedAuthMethod(method: string) {
+  if (typeof document === "undefined") return;
+  const expires = new Date();
+  expires.setFullYear(expires.getFullYear() + 1);
+  document.cookie = `${AUTH_METHOD_COOKIE}=${method};expires=${expires.toUTCString()};path=/;SameSite=Lax`;
+}
+
 export function LoginForm() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const [authMethod, setAuthMethod] = useState("auto");
+
+  useEffect(() => {
+    setAuthMethod(getSavedAuthMethod());
+  }, []);
 
   const { data: version } = useQuery({
     queryKey: ["version"],
@@ -36,7 +56,8 @@ export function LoginForm() {
   const onSubmit = async (data: FormData) => {
     setError(null);
     try {
-      const user = await login(data.username, data.password);
+      const user = await login(data.username, data.password, authMethod);
+      setSavedAuthMethod(authMethod);
       if (user.must_change_password) {
         navigate("/change-password");
       } else {
@@ -86,6 +107,48 @@ export function LoginForm() {
           </CardHeader>
           <CardContent className="px-0">
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+              {/* Auth Method Selector */}
+              <div className="space-y-2">
+                <Label className="font-label text-[10px] uppercase tracking-widest text-outline-variant block ml-1">
+                  Authentication Method
+                </Label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMethod("auto")}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+                      authMethod === "auto"
+                        ? "bg-primary-container text-on-primary-container"
+                        : "bg-surface-container-lowest text-outline-variant hover:bg-surface-container-high"
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMethod("ad")}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+                      authMethod === "ad"
+                        ? "bg-primary-container text-on-primary-container"
+                        : "bg-surface-container-lowest text-outline-variant hover:bg-surface-container-high"
+                    }`}
+                  >
+                    AD
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMethod("local")}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+                      authMethod === "local"
+                        ? "bg-primary-container text-on-primary-container"
+                        : "bg-surface-container-lowest text-outline-variant hover:bg-surface-container-high"
+                    }`}
+                  >
+                    Local
+                  </button>
+                </div>
+              </div>
+
               {/* Username Field */}
               <div className="space-y-2">
                 <Label className="font-label text-[10px] uppercase tracking-widest text-outline-variant block ml-1" htmlFor="username">

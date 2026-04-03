@@ -10,6 +10,23 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.network import Network
     from app.models.peer import Peer
+    from app.models.user_group import UserGroup
+
+
+class ADGroupMapping(Base):
+    """AD Group to NetLoom Group mapping."""
+    __tablename__ = "ad_group_mappings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ad_group_dn: Mapped[str] = mapped_column(String, nullable=False)
+    ad_group_name: Mapped[str] = mapped_column(String, nullable=False)
+    netloom_group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    netloom_group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="ad_mappings")
 
 
 class GroupNetworkAccess(Base):
@@ -54,6 +71,9 @@ class PeerGroup(Base):
     )
     network_access: Mapped[list["GroupNetworkAccess"]] = relationship(
         "GroupNetworkAccess", back_populates="group", cascade="all, delete-orphan"
+    )
+    ad_mappings: Mapped[list["ADGroupMapping"]] = relationship(
+        "ADGroupMapping", back_populates="netloom_group", cascade="all, delete-orphan"
     )
 
 

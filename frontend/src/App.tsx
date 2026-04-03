@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -14,6 +15,7 @@ import { GroupsPage } from "@/pages/GroupsPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
 import { SystemPage } from "@/pages/SystemPage";
 import { LogsPage } from "@/pages/LogsPage";
+import { systemApi } from "@/api/system";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,10 +25,23 @@ const queryClient = new QueryClient({
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user } = useAuth();
+  const { data: health } = useQuery({
+    queryKey: ["health"],
+    queryFn: () => systemApi.health().then((r) => r.data),
+    retry: false,
+    staleTime: Infinity,
+  });
+
   if (isLoading) return <div className="flex h-screen items-center justify-center text-muted-foreground">Loading...</div>;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (user?.must_change_password) return <Navigate to="/change-password" replace />;
-  if (!user?.onboarding_completed) return <Navigate to="/onboarding" replace />;
+  
+  const isSystemReady = health?.is_initialized ?? true;
+  console.log("Health:", health, "isSystemReady:", isSystemReady);
+  if (!isSystemReady) {
+    return <Navigate to="/onboarding" replace />;
+  }
+  
   return <>{children}</>;
 }
 

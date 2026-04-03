@@ -11,7 +11,7 @@ class ConnectionLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
-    peer_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("peers.id"), nullable=True)
+    peer_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("peers.id", ondelete="CASCADE"), nullable=True)
     peer_name: Mapped[str | None] = mapped_column(String, nullable=True)
     peer_ip: Mapped[str | None] = mapped_column(String, nullable=True)
     event_type: Mapped[str] = mapped_column(String, nullable=False)  # handshake, disconnect, timeout, firewall_block, config_applied, interface_up, interface_down, error

@@ -6,8 +6,10 @@ export type SyncStatus = "green" | "yellow" | "red";
 export interface Peer {
   id: number;
   name: string;
+  description: string | null;
   peer_type: PeerType;
   device_type: DeviceType | null;
+  os: string | null;
   public_key: string;
   assigned_ip: string;
   network_id: number | null;
@@ -29,6 +31,7 @@ export interface PeerStatus {
   id: number;
   name: string;
   peer_type: PeerType;
+  device_type: string | null;
   assigned_ip: string;
   is_enabled: boolean;
   is_online: boolean;
@@ -36,6 +39,7 @@ export interface PeerStatus {
   last_handshake: number;
   rx_bytes: number;
   tx_bytes: number;
+  os: string | null;
 }
 
 export interface RoadWarriorCreate {

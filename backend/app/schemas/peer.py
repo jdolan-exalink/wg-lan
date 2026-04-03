@@ -8,7 +8,7 @@ from app.utils.ip_utils import is_valid_cidr
 
 class RoadWarriorCreate(BaseModel):
     name: str
-    device_type: Literal["laptop", "ios", "android", "server"] = "laptop"
+    device_type: Literal["laptop", "ios", "android", "server", "user"] = "laptop"
     tunnel_mode: Literal["full", "split"] = "split"
     network_id: int | None = None
     dns: str | None = None
@@ -36,6 +36,8 @@ class BranchOfficeCreate(BaseModel):
 
 class PeerUpdate(BaseModel):
     name: str | None = None
+    description: str | None = None
+    device_type: str | None = None
     dns: str | None = None
     persistent_keepalive: int | None = None
     tunnel_mode: Literal["full", "split"] | None = None
@@ -63,6 +65,8 @@ class PeerResponse(BaseModel):
     name: str
     peer_type: str
     device_type: str | None
+    os: str | None = None
+    description: str | None = None
     public_key: str
     assigned_ip: str
     network_id: int | None
@@ -101,6 +105,7 @@ class PeerResponse(BaseModel):
             name=peer.name,
             peer_type=peer.peer_type,
             device_type=peer.device_type,
+            os=getattr(peer, 'os', None),
             public_key=peer.public_key,
             assigned_ip=peer.assigned_ip,
             network_id=peer.network_id,

@@ -6,6 +6,7 @@ from pydantic import BaseModel, field_validator
 class LoginRequest(BaseModel):
     username: str
     password: str
+    auth_method: str = "auto"
 
 
 class ChangePasswordRequest(BaseModel):

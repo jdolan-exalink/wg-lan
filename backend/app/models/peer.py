@@ -39,6 +39,8 @@ class Peer(Base):
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     last_config_hash: Mapped[str | None] = mapped_column(String, nullable=True)  # Hash of last downloaded config
     last_config_downloaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # When config was last downloaded
+    os: Mapped[str | None] = mapped_column(String, nullable=True)  # Detected client OS: windows, macos, linux, android, ios
+    description: Mapped[str | None] = mapped_column(String, nullable=True)  # User notes/description
 
     user: Mapped["User | None"] = relationship("User", back_populates="peers", foreign_keys=[user_id])
     device: Mapped["Device | None"] = relationship("Device")
