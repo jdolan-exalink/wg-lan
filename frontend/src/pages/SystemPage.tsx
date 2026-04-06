@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { systemApi, type ServerConfigUpdate, type ADConfigUpdate, type ADGroupMapping, type ADGroupMappingCreate, type ADGroupFromAD } from "@/api/system";
+import { speedTestApi } from "@/api/speedtest";
 import { groupsApi } from "@/api/networks";
 import { authApi } from "@/api/auth";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -16,7 +17,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Copy, Check, KeyRound, Users, FolderSync, Link, Plus, X, RefreshCw, Trash2 } from "lucide-react";
+import { Copy, Check, KeyRound, Users, FolderSync, Link, Plus, X, RefreshCw, Trash2, Search, Zap, Gauge, ArrowDownToLine, ArrowUpToLine, Clock } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ─── AD Configuration Tab ───────────────────────────────────────────────────────
 
@@ -84,9 +92,13 @@ function ADConfigurationTab() {
     onSuccess: (res) => {
       console.log("AD Groups response:", res.data);
       qc.setQueryData(["ad-groups-from-server"], res.data.groups);
+      setRefreshSuccess(`${res.data.groups.length} AD groups found`);
+      setTimeout(() => setRefreshSuccess(null), 3000);
     },
     onError: (err) => {
       console.log("AD Groups error:", err);
+      setRefreshSuccess("Failed to fetch AD groups");
+      setTimeout(() => setRefreshSuccess(null), 3000);
     },
   });
 
@@ -100,9 +112,22 @@ function ADConfigurationTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ad-group-mappings"] }),
   });
 
+  const createNetloomGroup = useMutation({
+    mutationFn: (data: { name: string; description?: string }) => groupsApi.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["netloom-groups"] });
+      setShowNewGroupDialog(false);
+      setNewGroupName("");
+    },
+  });
+
   const [showMappingForm, setShowMappingForm] = useState(false);
   const [newMapping, setNewMapping] = useState<{ ad_group_dn: string; ad_group_name: string; netloom_group_id: number } | null>(null);
   const [mappingSuccess, setMappingSuccess] = useState(false);
+  const [refreshSuccess, setRefreshSuccess] = useState<string | null>(null);
+  const [adGroupSearch, setAdGroupSearch] = useState("");
+  const [showNewGroupDialog, setShowNewGroupDialog] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
 
   const handleCreateMapping = () => {
     if (newMapping) {
@@ -341,6 +366,17 @@ function ADConfigurationTab() {
             </div>
           </header>
 
+          {refreshSuccess && (
+            <div className={cn(
+              "mb-4 p-3 rounded-lg text-sm",
+              refreshSuccess.startsWith("Failed")
+                ? "bg-error/10 text-error"
+                : "bg-secondary/10 text-secondary"
+            )}>
+              {refreshSuccess}
+            </div>
+          )}
+
           {mappingSuccess && (
             <div className="mb-4 p-3 bg-secondary/10 text-secondary rounded-lg text-sm">
               Mapping created successfully!
@@ -413,7 +449,7 @@ function ADConfigurationTab() {
       )}
 
       {/* Add Mapping Dialog */}
-      <Dialog open={showMappingForm} onOpenChange={setShowMappingForm}>
+      <Dialog open={showMappingForm} onOpenChange={(open) => { setShowMappingForm(open); if (!open) { setNewMapping(null); setAdGroupSearch(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add AD Group Mapping</DialogTitle>
@@ -425,44 +461,76 @@ function ADConfigurationTab() {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">AD Group</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search groups..."
+                  value={adGroupSearch}
+                  onChange={(e) => setAdGroupSearch(e.target.value)}
+                  className="w-full h-10 pl-9 px-3 rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary text-sm"
+                />
+              </div>
               <select
-                className="w-full h-10 px-3 rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary"
+                className="w-full h-32 px-3 rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary text-sm"
+                size={8}
                 onChange={(e) => {
                   const selected = adGroups.find(g => g.dn === e.target.value);
                   if (selected) {
-                    setNewMapping({ ad_group_dn: selected.dn, ad_group_name: selected.name, netloom_group_id: 0 });
+                    setNewMapping({ ad_group_dn: selected.dn, ad_group_name: selected.name, netloom_group_id: newMapping?.netloom_group_id ?? 0 });
                   }
                 }}
                 value={newMapping?.ad_group_dn ?? ""}
               >
-                <option value="">Select an AD group...</option>
-                {adGroups.map((g) => (
-                  <option key={g.dn} value={g.dn}>{g.name} ({g.sam_name})</option>
-                ))}
+                {[...adGroups]
+                  .filter(g =>
+                    g.name.toLowerCase().includes(adGroupSearch.toLowerCase()) ||
+                    g.sam_name.toLowerCase().includes(adGroupSearch.toLowerCase())
+                  )
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((g) => (
+                    <option key={g.dn} value={g.dn}>{g.name} ({g.sam_name})</option>
+                  ))}
               </select>
+              {adGroupSearch && [...adGroups].filter(g =>
+                g.name.toLowerCase().includes(adGroupSearch.toLowerCase()) ||
+                g.sam_name.toLowerCase().includes(adGroupSearch.toLowerCase())
+              ).length === 0 && (
+                <p className="text-xs text-on-surface-variant">No groups match "{adGroupSearch}"</p>
+              )}
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">NetLoom Group</label>
-              <select
-                className="w-full h-10 px-3 rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(e) => {
-                  if (newMapping) {
-                    setNewMapping({ ...newMapping, netloom_group_id: parseInt(e.target.value) });
-                  }
-                }}
-                value={newMapping?.netloom_group_id ?? ""}
-              >
-                <option value="">Select a NetLoom group...</option>
-                {netloomGroups.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
+              <div className="flex gap-2">
+                <Select
+                  value={newMapping?.netloom_group_id?.toString() ?? ""}
+                  onValueChange={(value) => {
+                    if (value === "__new__") {
+                      setShowNewGroupDialog(true);
+                      return;
+                    }
+                    if (newMapping) {
+                      setNewMapping({ ...newMapping, netloom_group_id: parseInt(value) });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Select a NetLoom group..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {netloomGroups.map((g) => (
+                      <SelectItem key={g.id} value={g.id.toString()}>{g.name}</SelectItem>
+                    ))}
+                    <SelectItem value="__new__">+ Create new group...</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowMappingForm(false); setNewMapping(null); }}>
+            <Button variant="outline" onClick={() => { setShowMappingForm(false); setNewMapping(null); setAdGroupSearch(""); }}>
               Cancel
             </Button>
             <Button
@@ -470,6 +538,57 @@ function ADConfigurationTab() {
               disabled={!newMapping?.ad_group_dn || !newMapping?.netloom_group_id || createMapping.isPending}
             >
               {createMapping.isPending ? "Creating..." : "Create Mapping"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create New NetLoom Group Dialog */}
+      <Dialog open={showNewGroupDialog} onOpenChange={(open) => { setShowNewGroupDialog(open); if (!open) setNewGroupName(""); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Group</DialogTitle>
+            <DialogDescription>
+              Enter a name for the new NetLoom group
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <Input
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Group name"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newGroupName.trim()) {
+                  createNetloomGroup.mutate({ name: newGroupName.trim() }, {
+                    onSuccess: (res) => {
+                      const newId = res.data.id;
+                      setNewMapping((prev) => prev ? { ...prev, netloom_group_id: newId } : null);
+                    },
+                  });
+                }
+              }}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowNewGroupDialog(false); setNewGroupName(""); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (newGroupName.trim()) {
+                  createNetloomGroup.mutate({ name: newGroupName.trim() }, {
+                    onSuccess: (res) => {
+                      const newId = res.data.id;
+                      setNewMapping((prev) => prev ? { ...prev, netloom_group_id: newId } : null);
+                    },
+                  });
+                }
+              }}
+              disabled={!newGroupName.trim() || createNetloomGroup.isPending}
+            >
+              {createNetloomGroup.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -690,12 +809,389 @@ function PasswordChangeForm() {
   );
 }
 
+// ─── Speed Test Tab ───────────────────────────────────────────────────────────
+
+type TestPhase = "idle" | "ping" | "download" | "upload" | "done" | "error";
+type TestMode = "full" | "ping" | "download" | "upload";
+
+function SpeedTestTab() {
+  const [phase, setPhase] = useState<TestPhase>("idle");
+  const [testMode, setTestMode] = useState<TestMode>("full");
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [jitterMs, setJitterMs] = useState<number | null>(null);
+  const [dlSpeed, setDlSpeed] = useState(0);
+  const [ulSpeed, setUlSpeed] = useState(0);
+  const [finalDl, setFinalDl] = useState(0);
+  const [finalUl, setFinalUl] = useState(0);
+  const [qualityScore, setQualityScore] = useState(0);
+  const [qualityLabel, setQualityLabel] = useState("");
+  const [gaugeValue, setGaugeValue] = useState(0);
+  const [gaugeLabel, setGaugeLabel] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const getScoreColor = (score: number) => {
+    if (score >= 90) return "text-tertiary";
+    if (score >= 75) return "text-primary";
+    if (score >= 50) return "text-yellow-500";
+    if (score >= 25) return "text-orange-500";
+    return "text-error";
+  };
+
+  const calcQuality = (p: number, d: number, u: number): [number, string] => {
+    let s = 100;
+    if (p <= 20) s -= 0;
+    else if (p <= 50) s -= 10;
+    else if (p <= 100) s -= 25;
+    else if (p <= 200) s -= 40;
+    else s -= 60;
+
+    if (d >= 100) s -= 0;
+    else if (d >= 50) s -= 5;
+    else if (d >= 10) s -= 15;
+    else if (d >= 1) s -= 25;
+    else s -= 35;
+
+    if (u >= 50) s -= 0;
+    else if (u >= 20) s -= 5;
+    else if (u >= 5) s -= 15;
+    else if (u >= 1) s -= 25;
+    else s -= 30;
+
+    s = Math.max(0, Math.min(100, s));
+    const label = s >= 90 ? "Excellent" : s >= 75 ? "Good" : s >= 50 ? "Fair" : s >= 25 ? "Poor" : "Bad";
+    return [s, label];
+  };
+
+  const runPing = async () => {
+    setPhase("ping");
+    const pings: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const t0 = performance.now();
+      await speedTestApi.ping();
+      const elapsed = performance.now() - t0;
+      pings.push(elapsed);
+      setPingMs(Math.round(pings.reduce((a, b) => a + b, 0) / pings.length * 10) / 10);
+      setGaugeValue(Math.round(elapsed));
+      setGaugeLabel("PING");
+    }
+    if (pings.length > 1) {
+      const mean = pings.reduce((a, b) => a + b, 0) / pings.length;
+      const jitter = Math.sqrt(pings.reduce((s, v) => s + (v - mean) ** 2, 0) / pings.length);
+      setJitterMs(Math.round(jitter * 10) / 10);
+    }
+    return pingMs ?? 0;
+  };
+
+  const runDownload = async () => {
+    setPhase("download");
+    setDlSpeed(0);
+    const dlSizes = [10_000_000, 100_000_000];
+    let bestDl = 0;
+    for (const size of dlSizes) {
+      const t0 = performance.now();
+      const res = await speedTestApi.download(size);
+      const elapsed = (performance.now() - t0) / 1000;
+      const bytes = (res.data as ArrayBuffer).byteLength;
+      const mbps = (bytes * 8) / elapsed / 1_000_000;
+      if (mbps > bestDl) bestDl = mbps;
+      setDlSpeed(Math.round(mbps * 10) / 10);
+      setGaugeValue(Math.round(mbps));
+      setGaugeLabel("DOWNLOAD");
+    }
+    setFinalDl(Math.round(bestDl * 10) / 10);
+    return bestDl;
+  };
+
+  const runUpload = async () => {
+    setPhase("upload");
+    setUlSpeed(0);
+    const ulSizes = [10_000_000, 100_000_000];
+    let bestUl = 0;
+    for (const size of ulSizes) {
+      const data = new ArrayBuffer(size);
+      const t0 = performance.now();
+      await speedTestApi.upload(data);
+      const elapsed = (performance.now() - t0) / 1000;
+      const mbps = (size * 8) / elapsed / 1_000_000;
+      if (mbps > bestUl) bestUl = mbps;
+      setUlSpeed(Math.round(mbps * 10) / 10);
+      setGaugeValue(Math.round(mbps));
+      setGaugeLabel("UPLOAD");
+    }
+    setFinalUl(Math.round(bestUl * 10) / 10);
+    return bestUl;
+  };
+
+  const runTest = async () => {
+    setIsRunning(true);
+    setPingMs(null);
+    setJitterMs(null);
+    setDlSpeed(0);
+    setUlSpeed(0);
+    setFinalDl(0);
+    setFinalUl(0);
+    setGaugeValue(0);
+    setGaugeLabel("");
+    setError(null);
+
+    try {
+      if (testMode === "ping") {
+        await runPing();
+        setPhase("done");
+        setGaugeValue(pingMs ?? 0);
+        setGaugeLabel("PING ms");
+      } else if (testMode === "download") {
+        const bestDl = await runDownload();
+        setPhase("done");
+        setGaugeValue(Math.round(bestDl));
+        setGaugeLabel("Mbps");
+      } else if (testMode === "upload") {
+        const bestUl = await runUpload();
+        setPhase("done");
+        setGaugeValue(Math.round(bestUl));
+        setGaugeLabel("Mbps");
+      } else {
+        const p = await runPing();
+        const d = await runDownload();
+        const u = await runUpload();
+        const [score, label] = calcQuality(p, d, u);
+        setPhase("done");
+        setQualityScore(score);
+        setQualityLabel(label);
+        setGaugeValue(score);
+        setGaugeLabel(label);
+      }
+    } catch {
+      setPhase("error");
+      setError("Test failed. Check your connection.");
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const circumference = 2 * Math.PI * 120;
+  const gaugeOffset = circumference - (gaugeValue / 200) * circumference;
+
+  const showPhase = (p: string) => {
+    if (testMode === "full") return true;
+    if (testMode === "ping" && p === "ping") return true;
+    if (testMode === "download" && p === "download") return true;
+    if (testMode === "upload" && p === "upload") return true;
+    return false;
+  };
+
+  return (
+    <div className="flex flex-col items-center space-y-6 py-4">
+      {/* Gauge */}
+      <div className="relative w-64 h-64 md:w-80 md:h-80">
+        <svg className="w-full h-full -rotate-90" viewBox="0 0 280 280">
+          <circle
+            cx="140" cy="140" r="120"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="12"
+            className="text-on-surface/5"
+          />
+          <circle
+            cx="140" cy="140" r="120"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="12"
+            strokeDasharray={circumference}
+            strokeDashoffset={gaugeOffset}
+            strokeLinecap="round"
+            className={cn(
+              "transition-all duration-500",
+              phase === "ping" ? "text-primary" :
+              phase === "download" ? "text-tertiary" :
+              phase === "upload" ? "text-secondary" :
+              phase === "done" ? getScoreColor(qualityScore) :
+              "text-error"
+            )}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          {phase === "idle" && (
+            <>
+              <Zap className="w-8 h-8 text-on-surface-variant mb-2" />
+              <span className="text-sm text-on-surface-variant">Ready</span>
+            </>
+          )}
+          {(phase === "ping" || phase === "download" || phase === "upload") && (
+            <>
+              <span className={cn(
+                "text-4xl md:text-5xl font-bold",
+                phase === "ping" ? "text-primary" :
+                phase === "download" ? "text-tertiary" : "text-secondary"
+              )}>
+                {gaugeValue}
+              </span>
+              <span className="text-sm text-on-surface-variant mt-1">
+                {phase === "ping" ? "ms" : "Mbps"}
+              </span>
+              <span className="text-xs text-on-surface-variant/60 mt-1 uppercase tracking-wider">
+                {gaugeLabel}
+              </span>
+            </>
+          )}
+          {phase === "done" && (
+            <>
+              <span className={cn("text-4xl md:text-5xl font-bold", getScoreColor(qualityScore))}>
+                {qualityScore}
+              </span>
+              <span className="text-sm text-on-surface-variant mt-1">/ 100</span>
+              <span className={cn("text-sm font-medium mt-1", getScoreColor(qualityScore))}>
+                {qualityLabel}
+              </span>
+            </>
+          )}
+          {phase === "error" && (
+            <>
+              <span className="text-2xl font-bold text-error">Error</span>
+              <span className="text-xs text-on-surface-variant mt-1">{error}</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Phase indicator */}
+      <div className="flex items-center gap-3">
+        {(["ping", "download", "upload"] as const).map((p) => (
+          <div key={p} className={cn("flex items-center gap-2", !showPhase(p) && "opacity-30")}>
+            <div className={cn(
+              "w-2 h-2 rounded-full",
+              phase === p ? "bg-primary animate-pulse" :
+              (p === "ping" && (phase === "download" || phase === "upload" || phase === "done")) ? "bg-tertiary" :
+              (p === "download" && (phase === "upload" || phase === "done")) ? "bg-secondary" :
+              "bg-on-surface/10"
+            )} />
+            <span className={cn(
+              "text-xs font-medium uppercase tracking-wider",
+              phase === p ? "text-primary" :
+              (p === "ping" && (phase === "download" || phase === "upload" || phase === "done")) ? "text-tertiary" :
+              (p === "download" && (phase === "upload" || phase === "done")) ? "text-secondary" :
+              "text-on-surface-variant/40"
+            )}>
+              {p === "ping" ? "Ping" : p === "download" ? "Download" : "Upload"}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Results */}
+      {(phase === "done" || phase === "error") && (
+        <div className="grid grid-cols-3 gap-4 w-full max-w-lg">
+          <div className="text-center">
+            <p className="text-2xl font-bold text-primary">
+              {pingMs !== null ? `${pingMs}` : "—"}
+            </p>
+            <p className="text-xs text-on-surface-variant">ms ping</p>
+            {jitterMs !== null && (
+              <p className="text-[10px] text-on-surface-variant/60">±{jitterMs} jitter</p>
+            )}
+          </div>
+          <div className="text-center">
+            <p className="text-2xl font-bold text-tertiary">
+              {finalDl > 0 ? `${finalDl}` : "—"}
+            </p>
+            <p className="text-xs text-on-surface-variant">Mbps down</p>
+          </div>
+          <div className="text-center">
+            <p className="text-2xl font-bold text-secondary">
+              {finalUl > 0 ? `${finalUl}` : "—"}
+            </p>
+            <p className="text-xs text-on-surface-variant">Mbps up</p>
+          </div>
+        </div>
+      )}
+
+      {/* Test mode selector + Run button */}
+      <div className="flex items-center gap-3">
+        <div className="flex gap-1 bg-surface-container rounded-lg p-1">
+          {([
+            { value: "full" as TestMode, label: "Full" },
+            { value: "ping" as TestMode, label: "Ping" },
+            { value: "download" as TestMode, label: "Download" },
+            { value: "upload" as TestMode, label: "Upload" },
+          ]).map((m) => (
+            <button
+              key={m.value}
+              onClick={() => setTestMode(m.value)}
+              disabled={isRunning}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all",
+                testMode === m.value
+                  ? "bg-primary-container text-on-primary-container"
+                  : "text-outline-variant hover:text-on-surface-variant"
+              )}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={runTest}
+          disabled={isRunning}
+          className="px-6 py-2 bg-tertiary text-white text-sm font-bold rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2 disabled:opacity-50"
+        >
+          {isRunning ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              Testing...
+            </>
+          ) : (
+            <>
+              <Zap className="w-4 h-4" />
+              Run Test
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Rerun button */}
+      {(phase === "done" || phase === "error") && (
+        <button
+          onClick={runTest}
+          className="px-6 py-2 bg-tertiary text-white text-sm font-bold rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Run Again
+        </button>
+      )}
+
+      {/* API Info */}
+      <section className="w-full max-w-lg bg-surface-container rounded-xl p-4 border border-outline-variant/10">
+        <h4 className="text-sm font-bold text-on-surface mb-2 flex items-center gap-1">
+          <Gauge className="w-3 h-3 text-primary" />
+          API Endpoints
+        </h4>
+        <div className="space-y-1">
+          <p className="text-[10px] font-mono text-on-surface-variant">GET  /api/speedtest/ping</p>
+          <p className="text-[10px] font-mono text-on-surface-variant">GET  /api/speedtest/download?size=N</p>
+          <p className="text-[10px] font-mono text-on-surface-variant">POST /api/speedtest/upload</p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function SystemPage() {
   const qc = useQueryClient();
   const { theme, toggleTheme } = useTheme();
-  const [activeTab, setActiveTab] = useState<"monitor" | "general" | "ad">("monitor");
+  const [activeTab, setActiveTab] = useState<"monitor" | "general" | "ad" | "test">("monitor");
+
+  const normalizeServerConfigUpdate = (data: ServerConfigUpdate): ServerConfigUpdate => ({
+    ...data,
+    address: data.address?.trim() || undefined,
+    endpoint: data.endpoint?.trim() || undefined,
+    dns: data.dns?.trim() ? data.dns.trim() : null,
+    post_up: data.post_up?.trim() ? data.post_up.trim() : null,
+    post_down: data.post_down?.trim() ? data.post_down.trim() : null,
+    vpn_domain: data.vpn_domain?.trim() ? data.vpn_domain.trim() : null,
+  });
 
   // ── Data queries ──────────────────────────────────────────────────────────
 
@@ -731,7 +1227,7 @@ export function SystemPage() {
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   const updateCfg = useMutation({
-    mutationFn: (data: ServerConfigUpdate) => systemApi.updateServerConfig(data),
+    mutationFn: (data: ServerConfigUpdate) => systemApi.updateServerConfig(normalizeServerConfigUpdate(data)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["server-config"] }),
   });
 
@@ -824,6 +1320,7 @@ export function SystemPage() {
         {[
           { id: "monitor" as const, label: "System Monitor" },
           { id: "general" as const, label: "General Settings" },
+          { id: "test" as const, label: "Test" },
           { id: "ad" as const, label: "Active Directory" },
         ].map((tab) => (
           <button
@@ -1320,6 +1817,10 @@ export function SystemPage() {
             </Button>
           </section>
         </div>
+      )}
+
+      {activeTab === "test" && (
+        <SpeedTestTab />
       )}
 
       {activeTab === "ad" && (

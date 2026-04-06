@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { policiesApi, groupsApi, firewallApi } from "@/api/networks";
+import { ipGroupsApi } from "@/api/ip-groups";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,8 +29,11 @@ import {
   RefreshCw,
   GripVertical,
   Info,
+  Users,
+  MapPin,
 } from "lucide-react";
 import type { Policy, PeerGroup } from "@/types/network";
+import type { IpGroup } from "@/types/ip-group";
 
 // ─── Direction helpers ────────────────────────────────────────────────────────
 
@@ -69,6 +73,11 @@ export function PoliciesPage() {
   const { data: groups } = useQuery({
     queryKey: ["groups"],
     queryFn: () => groupsApi.list().then((r) => r.data),
+  });
+
+  const { data: ipGroups } = useQuery({
+    queryKey: ["ip-groups"],
+    queryFn: () => ipGroupsApi.list().then((r) => r.data),
   });
 
   const { data: firewallStatus } = useQuery({
@@ -142,7 +151,9 @@ export function PoliciesPage() {
   // ── Add-rule form state ─────────────────────────────────────────────────────
   const [showForm, setShowForm]       = useState(false);
   const [newSource, setNewSource]     = useState("");
+  const [newDestType, setNewDestType] = useState<"group" | "ip-group">("group");
   const [newDest, setNewDest]         = useState("");
+  const [newIpGroup, setNewIpGroup]   = useState("");
   const [newDir, setNewDir]           = useState<"outbound" | "inbound" | "both">("both");
   const [newAction, setNewAction]     = useState<"allow" | "deny">("allow");
 
@@ -170,18 +181,23 @@ export function PoliciesPage() {
 
   // ── Staged actions ──────────────────────────────────────────────────────────
   const stageAddRule = () => {
-    if (!newSource || !newDest) return;
+    if (!newSource) return;
+    if (newDestType === "group" && !newDest) return;
+    if (newDestType === "ip-group" && !newIpGroup) return;
     const localId = `new-${Date.now()}`;
     const sourceGroup = (groups ?? []).find((g: PeerGroup) => g.id === parseInt(newSource));
-    const destGroup   = (groups ?? []).find((g: PeerGroup) => g.id === parseInt(newDest));
+    const destGroup   = newDestType === "group" ? (groups ?? []).find((g: PeerGroup) => g.id === parseInt(newDest)) : undefined;
+    const destIpGroup = newDestType === "ip-group" ? (ipGroups ?? []).find((g: IpGroup) => g.id === parseInt(newIpGroup)) : undefined;
     const staged: StagedPolicy = {
       id: -1,
       _localId: localId,
       _pending: "create",
       source_group_id:   parseInt(newSource),
       source_group_name: sourceGroup?.name ?? null,
-      dest_group_id:     parseInt(newDest),
+      dest_group_id:     destGroup ? parseInt(newDest) : null,
       dest_group_name:   destGroup?.name ?? null,
+      dest_ip_group_id:  destIpGroup ? parseInt(newIpGroup) : null,
+      dest_ip_group_name: destIpGroup?.name ?? null,
       direction: newDir,
       action:    newAction,
       enabled:   true,
@@ -190,7 +206,7 @@ export function PoliciesPage() {
       updated_at: new Date().toISOString(),
     };
     setStagedPolicies((prev) => [...prev, staged]);
-    setNewSource(""); setNewDest(""); setNewDir("both"); setNewAction("allow");
+    setNewSource(""); setNewDest(""); setNewIpGroup(""); setNewDestType("group"); setNewDir("both"); setNewAction("allow");
     setShowForm(false);
   };
 
@@ -235,7 +251,8 @@ export function PoliciesPage() {
     for (const p of stagedPolicies.filter((x) => x._pending === "create")) {
       await createMutation.mutateAsync({
         source_group_id: p.source_group_id,
-        dest_group_id:   p.dest_group_id,
+        dest_group_id:   p.dest_group_id ?? null,
+        dest_ip_group_id: p.dest_ip_group_id ?? null,
         direction:       p.direction,
         action:          p.action,
         enabled:         p.enabled,
@@ -325,11 +342,11 @@ export function PoliciesPage() {
                   <Plus className="h-4 w-4" /> Nueva Regla
                 </CardTitle>
                 <CardDescription>
-                  Los miembros del grupo origen accederán a las redes del grupo destino.
+                  Los miembros del grupo origen accederán al grupo o IPs de destino.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Origen (Grupo)</label>
                     <Select value={newSource} onValueChange={setNewSource}>
@@ -347,21 +364,48 @@ export function PoliciesPage() {
                     </Select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Destino (Grupo)</label>
-                    <Select value={newDest} onValueChange={setNewDest}>
-                      <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                    <label className="text-xs text-muted-foreground">Tipo Destino</label>
+                    <Select value={newDestType} onValueChange={(v) => { setNewDestType(v as "group" | "ip-group"); setNewDest(""); setNewIpGroup(""); }}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {(groups ?? []).map((g: PeerGroup) => (
-                          <SelectItem key={g.id} value={String(g.id)}>
-                            {g.name}
-                            {g.member_count != null && (
-                              <span className="text-muted-foreground ml-1">({g.member_count})</span>
-                            )}
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="group"><Users className="h-3 w-3 inline mr-1" /> Grupo</SelectItem>
+                        <SelectItem value="ip-group"><MapPin className="h-3 w-3 inline mr-1" /> Grupo de IPs</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
+                  {newDestType === "group" ? (
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Destino (Grupo)</label>
+                      <Select value={newDest} onValueChange={setNewDest}>
+                        <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                        <SelectContent>
+                          {(groups ?? []).map((g: PeerGroup) => (
+                            <SelectItem key={g.id} value={String(g.id)}>
+                              {g.name}
+                              {g.member_count != null && (
+                                <span className="text-muted-foreground ml-1">({g.member_count})</span>
+                              )}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Destino (IPs)</label>
+                      <Select value={newIpGroup} onValueChange={setNewIpGroup}>
+                        <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                        <SelectContent>
+                          {(ipGroups ?? []).map((g: IpGroup) => (
+                            <SelectItem key={g.id} value={String(g.id)}>
+                              {g.name}
+                              <span className="text-muted-foreground ml-1">({g.entry_count} IPs)</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Dirección</label>
                     <Select value={newDir} onValueChange={(v) => setNewDir(v as typeof newDir)}>
@@ -384,7 +428,7 @@ export function PoliciesPage() {
                     </Select>
                   </div>
                   <div className="flex items-end gap-2">
-                    <Button size="sm" onClick={stageAddRule} disabled={!newSource || !newDest}>
+                    <Button size="sm" onClick={stageAddRule} disabled={!newSource || (newDestType === "group" && !newDest) || (newDestType === "ip-group" && !newIpGroup)}>
                       Agregar
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => setShowForm(false)}>
@@ -485,7 +529,14 @@ export function PoliciesPage() {
                           </td>
                           {/* dest */}
                           <td className="px-4 py-2 font-medium">
-                            {p.dest_group_name ?? `Grupo ${p.dest_group_id}`}
+                            {p.dest_ip_group_id ? (
+                              <span className="inline-flex items-center gap-1">
+                                <MapPin className="h-3 w-3 text-muted-foreground" />
+                                {p.dest_ip_group_name ?? `IPs ${p.dest_ip_group_id}`}
+                              </span>
+                            ) : (
+                              p.dest_group_name ?? `Grupo ${p.dest_group_id}`
+                            )}
                           </td>
                           {/* action toggle */}
                           <td className="px-4 py-2">

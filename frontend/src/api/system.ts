@@ -153,3 +153,50 @@ export const systemApi = {
   deleteADGroupMapping: (id: number) => client.delete(`/system/ad/group-mappings/${id}`),
   resetOnboarding: () => client.post<{ message: string }>("/onboarding/reset"),
 };
+
+export interface SpeedTestRequest {
+  download_size_mb?: number;
+  upload_size_mb?: number;
+  latency_samples?: number;
+}
+
+export interface LatencyResult {
+  latency_ms: number;
+  jitter_ms: number;
+  samples: number;
+}
+
+export interface DownloadResult {
+  speed_mbps: number;
+  bytes_transferred: number;
+  duration_ms: number;
+}
+
+export interface UploadResult {
+  speed_mbps: number;
+  bytes_transferred: number;
+  duration_ms: number;
+}
+
+export interface SpeedTestResult {
+  latency: LatencyResult;
+  download: DownloadResult;
+  upload: UploadResult;
+  quality_score: number;
+  quality_label: string;
+}
+
+export interface LatencyTestResult {
+  latency_ms: number;
+  jitter_ms: number;
+  samples: number;
+  quality_score: number;
+  quality_label: string;
+}
+
+export const speedTestApi = {
+  runFullTest: (data?: SpeedTestRequest) =>
+    client.post<SpeedTestResult>("/system/speedtest", data),
+  runLatencyTest: (samples = 10) =>
+    client.get<LatencyTestResult>(`/system/speedtest/latency?samples=${samples}`),
+};

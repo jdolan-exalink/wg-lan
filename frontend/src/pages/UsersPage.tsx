@@ -360,6 +360,7 @@ export function UsersPage() {
                             size="sm"
                             onClick={() => handleToggleActive(user)}
                             title={user.is_active ? "Deactivate" : "Activate"}
+                            disabled={user.username === "admin"}
                           >
                             {user.is_active ? (
                               <UserX className="h-4 w-4 text-error" />
@@ -478,8 +479,9 @@ export function UsersPage() {
                     id="edit_is_active"
                     name="is_active"
                     defaultChecked={editingUser.is_active}
+                    disabled={editingUser.username === "admin"}
                   />
-                  <Label htmlFor="edit_is_active">Active</Label>
+                  <Label htmlFor="edit_is_active" className={editingUser.username === "admin" ? "opacity-50" : ""}>Active</Label>
                 </div>
                 <div className="flex items-center gap-2">
                   <Checkbox

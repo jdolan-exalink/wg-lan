@@ -17,6 +17,7 @@ const navItems = [
   { to: "/", label: "Dashboard", icon: "dashboard", end: true },
   { to: "/peers", label: "Peers", icon: "hub" },
   { to: "/networks", label: "Networks", icon: "lan" },
+  { to: "/ip-groups", label: "IP Groups", icon: "dns" },
   { to: "/users", label: "Usuarios", icon: "people" },
   { to: "/groups", label: "Groups", icon: "group" },
   { to: "/policies", label: "Policies", icon: "policy" },

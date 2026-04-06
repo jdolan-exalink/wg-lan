@@ -92,12 +92,13 @@ class PeerGroupMember(Base):
 class Policy(Base):
     __tablename__ = "policies"
     __table_args__ = (
-        UniqueConstraint("source_group_id", "dest_group_id", "direction", name="uq_policy_source_dest_direction"),
+        UniqueConstraint("source_group_id", "dest_group_id", "dest_ip_group_id", "direction", name="uq_policy_source_dest_direction"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source_group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
-    dest_group_id: Mapped[int] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=False)
+    dest_group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("peer_groups.id", ondelete="CASCADE"), nullable=True)
+    dest_ip_group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ip_groups.id", ondelete="CASCADE"), nullable=True)
     direction: Mapped[str] = mapped_column(String, nullable=False, default="both")  # 'outbound', 'inbound', 'both'
     action: Mapped[str] = mapped_column(String, nullable=False, default="allow")  # 'allow' or 'deny'
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True)  # When False, rule is inactive
@@ -107,6 +108,7 @@ class Policy(Base):
 
     source_group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="source_policies", foreign_keys=[source_group_id])
     dest_group: Mapped["PeerGroup"] = relationship("PeerGroup", back_populates="dest_policies", foreign_keys=[dest_group_id])
+    dest_ip_group: Mapped["IpGroup"] = relationship("IpGroup", back_populates="dest_policies", foreign_keys=[dest_ip_group_id])
 
     @property
     def source_group_name(self) -> str | None:
@@ -115,3 +117,7 @@ class Policy(Base):
     @property
     def dest_group_name(self) -> str | None:
         return self.dest_group.name if self.dest_group else None
+
+    @property
+    def dest_ip_group_name(self) -> str | None:
+        return self.dest_ip_group.name if self.dest_ip_group else None

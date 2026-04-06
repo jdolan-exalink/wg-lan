@@ -56,7 +56,6 @@ def _get_server_ip(iface: str) -> str | None:
                 return line.split()[1].split("/")[0]
     return None
 
-
 def _ensure_chains():
     """Create custom chains if they don't exist."""
     # Create FORWARD chain

@@ -6,7 +6,8 @@ from pydantic import BaseModel
 
 class PolicyCreate(BaseModel):
     source_group_id: int
-    dest_group_id: int
+    dest_group_id: int | None = None
+    dest_ip_group_id: int | None = None
     direction: Literal["outbound", "inbound", "both"] = "both"
     action: Literal["allow", "deny"] = "allow"
     enabled: bool = True
@@ -22,8 +23,10 @@ class PolicyResponse(BaseModel):
     id: int
     source_group_id: int
     source_group_name: str | None = None
-    dest_group_id: int
+    dest_group_id: int | None = None
     dest_group_name: str | None = None
+    dest_ip_group_id: int | None = None
+    dest_ip_group_name: str | None = None
     direction: str
     action: str
     enabled: bool

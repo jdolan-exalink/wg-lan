@@ -90,10 +90,10 @@ export function LoginForm() {
             </div>
           </div>
           <h1 className="font-headline font-black text-4xl tracking-tighter text-on-surface">
-            NetLoom
+            NETLoom VPN
           </h1>
           <p className="font-label text-xs uppercase tracking-widest text-outline mt-2">
-            Network Orchestrator • {version ? `v${version.version}` : "v0.3.0"}
+            WireGuard®
           </p>
         </div>
 
@@ -202,15 +202,14 @@ export function LoginForm() {
                 disabled={isSubmitting}
                 className="w-full py-4 px-6 rounded-lg bg-primary-container text-on-primary-container font-headline font-bold text-sm tracking-tight transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] inner-glow flex items-center justify-center gap-2 group"
               >
-                {isSubmitting ? "Authenticating..." : "Sign In to Portal"}
-                <span className="material-symbols-outlined text-xl transition-transform group-hover:translate-x-1">arrow_forward</span>
+                Login
               </Button>
             </form>
 
             {/* Bottom Action */}
             <div className="mt-8 pt-6 border-t border-outline-variant/10 text-center">
               <p className="text-sm text-outline font-body">
-                Unauthorized access is monitored.
+                DOLAN SS 2026 - V{version ? version.version : "0.7.1"}
               </p>
             </div>
           </CardContent>

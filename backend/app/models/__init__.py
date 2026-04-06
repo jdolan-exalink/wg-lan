@@ -10,6 +10,7 @@ from app.models.device import Device
 from app.models.config_revision import ConfigRevision
 from app.models.user_group import UserGroup
 from app.models.user import UserNetworkAccess
+from app.models.ip_group import IpGroup, IpGroupEntry
 
 __all__ = [
     "User",
@@ -29,4 +30,6 @@ __all__ = [
     "GroupNetworkAccess",
     "UserNetworkAccess",
     "ADGroupMapping",
+    "IpGroup",
+    "IpGroupEntry",
 ]

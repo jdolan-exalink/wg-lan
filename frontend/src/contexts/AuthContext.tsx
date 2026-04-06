@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/api/auth";
 import type { User } from "@/types/auth";
 
@@ -29,6 +30,7 @@ function setAuthMethodCookie(method: string) {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const qc = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -56,6 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     await authApi.logout();
     setUser(null);
+    qc.clear();
   };
 
   return (

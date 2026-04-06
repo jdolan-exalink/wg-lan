@@ -34,11 +34,13 @@ from app.services.auth_service import (
 )
 from app.services.audit_service import log as audit_log
 from app.services.connection_log_service import log_connection
+from app.services import ad_service, ad_mapping_service
+from app.models.server_config import ServerConfig
 
 router = APIRouter(prefix="/api/v1/client", tags=["client-sync"])
 
 # Seconds since last_seen_at before a peer is considered disconnected
-_ACTIVE_CONNECTION_TTL_SECONDS = 180
+_ACTIVE_CONNECTION_TTL_SECONDS = 30
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -86,6 +88,25 @@ def _get_current_client_user(
     return user
 
 
+def _normalize_username(username: str) -> str:
+    """Strip DOMAIN prefix and lowercase for consistent user matching."""
+    if "\\" in username:
+        username = username.split("\\", 1)[1]
+    return username.lower()
+
+
+def _extract_ad_domain(base_dn: str | None) -> str:
+    """Extract domain from AD base_dn. E.g. DC=empresa,DC=local -> empresa.local"""
+    if not base_dn:
+        return "ad"
+    parts = []
+    for part in base_dn.split(","):
+        part = part.strip()
+        if part.upper().startswith("DC="):
+            parts.append(part[3:])
+    return ".".join(parts) if parts else "ad"
+
+
 def _get_or_create_peer(
     db: Session,
     user: User,
@@ -93,7 +114,9 @@ def _get_or_create_peer(
 ) -> Peer:
     """
     Return the active Peer for the user.
-    If it doesn't exist yet, auto-create it using only the username.
+    If it doesn't exist yet, auto-create it using username@source naming:
+      - Local users: username@local
+      - AD users: username@domain (domain extracted from ad_base_dn)
     The peer is identified by user_id - always the same peer for the same user.
     """
     from app.services.peer_service import create_roadwarrior
@@ -119,7 +142,14 @@ def _get_or_create_peer(
                 db.commit()
         return peer
 
-    # No peer yet — auto-create it (name = username only)
+    # Determine peer name based on auth source
+    if user.auth_source == "ad":
+        cfg = db.query(ServerConfig).first()
+        domain = _extract_ad_domain(cfg.ad_base_dn if cfg else None)
+        peer_name = f"{user.username}@{domain}"
+    else:
+        peer_name = f"{user.username}@local"
+
     # Detect OS from User-Agent if available
     os_type = "unknown"
     if request:
@@ -134,7 +164,7 @@ def _get_or_create_peer(
     }
     
     peer_data = RoadWarriorCreate(
-        name=user.username,
+        name=peer_name,
         device_type=device_type_map.get(os_type, "user"),
         tunnel_mode="split",
         persistent_keepalive=25,
@@ -153,7 +183,7 @@ def _get_or_create_peer(
         user_id=user.id,
         target_type="peer",
         target_id=peer.id,
-        details={"peer_name": user.username},
+        details={"peer_name": peer_name},
     )
 
     return peer
@@ -168,17 +198,94 @@ def client_login(
 ):
     """
     Authenticate client and return tokens.
-    Auto-provisions a WireGuard Peer on first login (named by username only).
+    Supports local and AD authentication.
+    Auto-provisions a WireGuard Peer on first login:
+      - Local users: username@local
+      - AD users: username@domain
     Reuses existing peer if user already has one.
     """
-    user = authenticate_user(db, body.username, body.password)
-    if not user:
+    cfg = db.query(ServerConfig).first()
+    ad_enabled = cfg.ad_enabled if cfg else False
+    auth_method = body.auth_method or "auto"
+
+    # Normalize username: strip DOMAIN\ prefix and lowercase
+    normalized_username = _normalize_username(body.username)
+
+    user = None
+    auth_source = "local"
+
+    use_ad = ad_enabled and auth_method in ("auto", "ad")
+    use_local = not ad_enabled or auth_method in ("local", "auto")
+
+    if use_ad:
+        require_membership = cfg.ad_require_membership if cfg else True
+        
+        try:
+            ad_result = ad_service.authenticate_ad(db, body.username, body.password)
+            if ad_result:
+                auth_source = "ad"
+                netloom_groups = ad_mapping_service.map_ad_groups_to_netloom(db, ad_result.get("ad_groups", []))
+                
+                if require_membership and not netloom_groups:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not member of any mapped AD group",
+                    )
+                
+                # Use canonical AD username (sAMAccountName) if available, otherwise normalized
+                canonical_username = ad_result.get("username", normalized_username).lower()
+                # Also strip DOMAIN\ just in case AD returned it with prefix
+                canonical_username = _normalize_username(canonical_username)
+                
+                user = db.query(User).filter(
+                    User.username == canonical_username
+                ).first()
+                if not user:
+                    # Also try with the original normalized username (fallback)
+                    user = db.query(User).filter(
+                        User.username == normalized_username
+                    ).first()
+                if not user:
+                    from app.services.auth_service import hash_password
+                    user = User(
+                        username=canonical_username,
+                        password_hash=hash_password(""),
+                        is_active=True,
+                    )
+                    db.add(user)
+                    db.commit()
+                    db.refresh(user)
+                if not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User account is inactive",
+                    )
+                user.last_login_at = datetime.now(timezone.utc)
+                user.auth_source = "ad"
+                db.commit()
+        except ad_service.ADAuthenticationError:
+            if auth_method == "ad":
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid AD credentials",
+                )
+            use_local = True
+
+    if use_local and not user:
+        user = authenticate_user(db, normalized_username, body.password)
+        if user:
+            auth_source = "local"
+            user.last_login_at = datetime.now(timezone.utc)
+            user.auth_source = "local"
+            db.commit()
+
+    if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
 
-    # Block login if user already has an active connection (check by peer updated_at)
+    # Block login if user already has an active connection (check by last_config_downloaded_at)
     existing_peer = (
         db.query(Peer)
         .filter(
@@ -188,8 +295,8 @@ def client_login(
         )
         .first()
     )
-    if existing_peer and existing_peer.updated_at:
-        last_seen = existing_peer.updated_at
+    if existing_peer and existing_peer.last_config_downloaded_at:
+        last_seen = existing_peer.last_config_downloaded_at
         if last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - last_seen).total_seconds()
@@ -261,8 +368,8 @@ def get_full_config(
     # Get or auto-provision the peer for this user
     peer = _get_or_create_peer(db, user, request)
 
-    # Update last_seen
-    peer.updated_at = datetime.now(timezone.utc)
+    # Update last_config_downloaded_at (used for active connection check)
+    peer.last_config_downloaded_at = datetime.now(timezone.utc)
     db.commit()
 
     # Get allowed IPs from policy compiler (includes VPN subnet + branch routes)
@@ -377,6 +484,39 @@ def get_config_delta(
     )
 
 
+@router.post("/disconnect", status_code=status.HTTP_200_OK)
+def report_client_disconnect(
+    request: Request,
+    user: User = Depends(_get_current_client_user),
+    db: Session = Depends(get_db),
+):
+    """Mark the user's peer as disconnected so they can reconnect immediately."""
+    peer = (
+        db.query(Peer)
+        .filter(
+            Peer.user_id == user.id,
+            Peer.is_enabled == True,
+            Peer.peer_type == "roadwarrior",
+        )
+        .first()
+    )
+    if peer:
+        # Clear the last-seen timestamp so the connection check passes on next login
+        peer.last_config_downloaded_at = None
+        db.commit()
+
+    log_connection(
+        db,
+        event_type="disconnect",
+        message=f"User '{user.username}' disconnected",
+        peer_id=peer.id if peer else None,
+        peer_name=peer.name if peer else None,
+        severity="info",
+    )
+
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 @router.post("/status", status_code=status.HTTP_200_OK)
 def report_client_status(
     body: ClientStatusRequest,
@@ -389,8 +529,8 @@ def report_client_status(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     
-    # Update updated_at as proxy for last_seen (we don't have a dedicated field)
-    peer.updated_at = datetime.now(timezone.utc)
+    # Update last_config_downloaded_at as proxy for last_seen
+    peer.last_config_downloaded_at = datetime.now(timezone.utc)
     db.commit()
     
     audit_log(

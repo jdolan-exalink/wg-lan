@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { ChangePasswordForm } from "@/components/auth/ChangePasswordForm";
 import { OnboardingWizard } from "@/components/auth/OnboardingWizard";
+import { IpGroupsPage } from "@/pages/IpGroupsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { PeersPage } from "@/pages/PeersPage";
 import { NetworksPage } from "@/pages/NetworksPage";
@@ -30,6 +31,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
     queryFn: () => systemApi.health().then((r) => r.data),
     retry: false,
     staleTime: Infinity,
+    enabled: isAuthenticated,
   });
 
   if (isLoading) return <div className="flex h-screen items-center justify-center text-muted-foreground">Loading...</div>;
@@ -37,7 +39,6 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   if (user?.must_change_password) return <Navigate to="/change-password" replace />;
   
   const isSystemReady = health?.is_initialized ?? true;
-  console.log("Health:", health, "isSystemReady:", isSystemReady);
   if (!isSystemReady) {
     return <Navigate to="/onboarding" replace />;
   }
@@ -65,6 +66,7 @@ export default function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/peers" element={<PeersPage />} />
               <Route path="/networks" element={<NetworksPage />} />
+              <Route path="/ip-groups" element={<IpGroupsPage />} />
               <Route path="/users" element={<UsersPage />} />
               <Route path="/groups" element={<GroupsPage />} />
               <Route path="/policies" element={<PoliciesPage />} />

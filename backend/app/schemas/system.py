@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.utils.ip_utils import is_valid_cidr
 
 
 class ServerConfigResponse(BaseModel):
@@ -36,6 +38,36 @@ class ServerConfigUpdate(BaseModel):
     api_https_port: int | None = None
     api_http_enabled: bool | None = None
     vpn_domain: str | None = None
+
+    @field_validator("address")
+    @classmethod
+    def validate_address(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("Address cannot be empty")
+        if not is_valid_cidr(value):
+            raise ValueError("Address must be a valid CIDR")
+        return value
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("Endpoint cannot be empty")
+        return value
+
+    @field_validator("dns", "post_up", "post_down", "vpn_domain")
+    @classmethod
+    def normalise_optional_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
 
 class RegenerateKeyResponse(BaseModel):
@@ -179,3 +211,35 @@ class ADGroupMappingBulkCreate(BaseModel):
 
 class ADGroupsFromADResponse(BaseModel):
     groups: list[dict]
+
+
+class LatencyResult(BaseModel):
+    latency_ms: float
+    jitter_ms: float
+    samples: int
+
+
+class DownloadResult(BaseModel):
+    speed_mbps: float
+    bytes_transferred: int
+    duration_ms: float
+
+
+class UploadResult(BaseModel):
+    speed_mbps: float
+    bytes_transferred: int
+    duration_ms: float
+
+
+class SpeedTestRequest(BaseModel):
+    download_size_mb: float = 1.0
+    upload_size_mb: float = 1.0
+    latency_samples: int = 10
+
+
+class SpeedTestResult(BaseModel):
+    latency: LatencyResult
+    download: DownloadResult
+    upload: UploadResult
+    quality_score: float
+    quality_label: str

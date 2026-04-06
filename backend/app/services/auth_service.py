@@ -132,6 +132,11 @@ def cleanup_expired_tokens(db: Session) -> int:
 
 
 def authenticate_user(db: Session, username: str, password: str) -> User | None:
+    # Normalize: strip DOMAIN\ prefix and lowercase
+    if "\\" in username:
+        username = username.split("\\", 1)[1]
+    username = username.lower()
+    
     user = db.query(User).filter(User.username == username).first()
     if not user:
         return None

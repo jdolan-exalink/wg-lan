@@ -53,7 +53,7 @@ export const policiesApi = {
   list: (source_group_id?: number, dest_group_id?: number) =>
     client.get<Policy[]>("/policies", { params: { source_group_id, dest_group_id } }),
   matrix: () => client.get<PolicyMatrix>("/policies/matrix"),
-  create: (data: { source_group_id: number; dest_group_id: number; direction: "outbound" | "inbound" | "both"; action: "allow" | "deny"; enabled?: boolean }) =>
+  create: (data: { source_group_id: number; dest_group_id?: number | null; dest_ip_group_id?: number | null; direction: "outbound" | "inbound" | "both"; action: "allow" | "deny"; enabled?: boolean }) =>
     client.post<Policy>("/policies", data),
   update: (id: number, data: { direction?: "outbound" | "inbound" | "both"; action?: "allow" | "deny"; enabled?: boolean }) =>
     client.patch<Policy>(`/policies/${id}`, data),

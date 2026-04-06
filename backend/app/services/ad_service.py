@@ -129,12 +129,12 @@ def authenticate_ad_with_backup(db, username: str, password: str) -> dict[str, A
             user_filter = (cfg.ad_user_filter or "(sAMAccountName={username})").format(username=ldap_conv.escape_filter_chars(username))
             search_base = cfg.ad_base_dn
             admin_conn = ldap3.Connection(server, auto_bind=True)
-            admin_conn.search(search_base, f"(&{user_filter})(objectClass=user)", attributes=["sAMAccountName"])
+            admin_conn.search(search_base, f"(&{user_filter}(objectClass=user))", attributes=["sAMAccountName"])
 
             if not admin_conn.entries:
                 raise ADInvalidCredentialsError("User not found in AD")
 
-            user_dn = str(admin_conn.entries[0].dn)
+            user_dn = str(admin_conn.entries[0].entry_dn)
             admin_conn.unbind()
 
             conn = ldap3.Connection(server, user=user_dn, password=password, auto_bind=True)
@@ -158,14 +158,14 @@ def authenticate_ad_with_backup(db, username: str, password: str) -> dict[str, A
 
         admin_conn.search(
             search_base,
-            f"(&{user_filter})(objectClass=user)",
+            f"(&{user_filter}(objectClass=user))",
             attributes=["sAMAccountName", "memberOf"],
         )
 
         if not admin_conn.entries:
             raise ADInvalidCredentialsError("User not found in AD")
 
-        user_dn = str(admin_conn.entries[0].dn)
+        user_dn = str(admin_conn.entries[0].entry_dn)
         member_of = getattr(admin_conn.entries[0], "memberOf", [])
 
         conn = ldap3.Connection(server, user=user_dn, password=password, auto_bind=True)
@@ -203,6 +203,10 @@ def authenticate_ad(db, username: str, password: str) -> dict[str, Any]:
     if not password:
         raise ADInvalidCredentialsError("Password is required")
 
+    # Normalize username: strip DOMAIN\ prefix before LDAP search
+    if "\\" in username:
+        username = username.split("\\", 1)[1]
+
     server = ldap3.Server(config["server"], use_ssl=config["use_ssl"], get_info=ALL)
 
     try:
@@ -216,12 +220,13 @@ def authenticate_ad(db, username: str, password: str) -> dict[str, Any]:
             user_filter = config["user_filter"].format(username=ldap_conv.escape_filter_chars(username))
             search_base = config["base_dn"]
             admin_conn = ldap3.Connection(server, auto_bind=True)
-            admin_conn.search(search_base, f"(&{user_filter})(objectClass=user)", attributes=["dn", "sAMAccountName"])
+            admin_conn.search(search_base, f"(&{user_filter}(objectClass=user))", attributes=["dn", "sAMAccountName"])
 
             if not admin_conn.entries:
                 raise ADInvalidCredentialsError("User not found in AD")
 
-            user_dn = str(admin_conn.entries[0].dn)
+            user_dn = str(admin_conn.entries[0].entry_dn)
+            sam_account_name = str(admin_conn.entries[0].sAMAccountName)
             admin_conn.unbind()
 
             conn = ldap3.Connection(server, user=user_dn, password=password, auto_bind=True)
@@ -229,22 +234,22 @@ def authenticate_ad(db, username: str, password: str) -> dict[str, Any]:
             if not conn.bound:
                 raise ADInvalidCredentialsError("Invalid credentials")
 
-            return get_user_info(conn, config, username, user_dn)
+            return get_user_info(conn, config, sam_account_name, user_dn)
 
         user_filter = config["user_filter"].format(username=ldap_conv.escape_filter_chars(username))
         search_base = config["base_dn"]
 
         admin_conn.search(
             search_base,
-            f"(&{user_filter})(objectClass=user)",
+            f"(&{user_filter}(objectClass=user))",
             attributes=["sAMAccountName", "memberOf"],
         )
 
         if not admin_conn.entries:
             raise ADInvalidCredentialsError("User not found in AD")
 
-        user_dn = str(admin_conn.entries[0].dn)
-        user_filter = config["user_filter"].format(username=ldap_conv.escape_filter_chars(username))
+        user_dn = str(admin_conn.entries[0].entry_dn)
+        sam_account_name = str(admin_conn.entries[0].sAMAccountName)
         member_of = getattr(admin_conn.entries[0], "memberOf", [])
 
         conn = ldap3.Connection(server, user=user_dn, password=password, auto_bind=True)
@@ -252,7 +257,7 @@ def authenticate_ad(db, username: str, password: str) -> dict[str, Any]:
         if not conn.bound:
             raise ADInvalidCredentialsError("Invalid credentials")
 
-        result = get_user_info_with_groups(conn, config, username, user_dn, member_of)
+        result = get_user_info_with_groups(conn, config, sam_account_name, user_dn, member_of)
         conn.unbind()
         admin_conn.unbind()
         return result
@@ -269,11 +274,12 @@ def authenticate_ad(db, username: str, password: str) -> dict[str, Any]:
 
 def get_user_info(conn, config, username: str, user_dn: str) -> dict[str, Any]:
     search_base = config["base_dn"]
+    # Use sAMAccountName directly (already canonical, no DOMAIN\ prefix)
     user_filter = config["user_filter"].format(username=ldap_conv.escape_filter_chars(username))
 
     conn.search(
         search_base,
-        f"(&{user_filter})(objectClass=user)",
+        f"(&{user_filter}(objectClass=user))",
         attributes=["sAMAccountName", "memberOf"],
     )
 
@@ -282,8 +288,9 @@ def get_user_info(conn, config, username: str, user_dn: str) -> dict[str, Any]:
 
     entry = conn.entries[0]
     member_of = getattr(entry, "memberOf", [])
+    sam_account_name = str(entry.sAMAccountName)
 
-    return get_user_info_with_groups(conn, config, username, user_dn, member_of)
+    return get_user_info_with_groups(conn, config, sam_account_name, user_dn, member_of)
 
 
 def get_user_info_with_groups(conn, config, username: str, user_dn: str, member_of) -> dict[str, Any]:

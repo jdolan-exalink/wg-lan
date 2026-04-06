@@ -1,6 +1,13 @@
 import client from "./client";
 import type { Peer, RoadWarriorCreate, BranchOfficeCreate, PermissionSummary, PeerSyncStatus } from "@/types/peer";
 
+function buildSameOriginApiUrl(path: string): string {
+  if (typeof window === "undefined") {
+    return path;
+  }
+  return new URL(path, window.location.origin).toString();
+}
+
 export const peersApi = {
   list: (peer_type?: string) =>
     client.get<Peer[]>("/peers", { params: peer_type ? { peer_type } : {} }),
@@ -25,11 +32,11 @@ export const peersApi = {
 
   regenerateKeys: (id: number) => client.post<Peer>(`/peers/${id}/regenerate-keys`),
 
-  configUrl: (id: number) => `/api/peers/${id}/config`,
+  configUrl: (id: number) => buildSameOriginApiUrl(`/api/peers/${id}/config`),
 
-  mikrotikConfigUrl: (id: number) => `/api/peers/${id}/config/mikrotik`,
+  mikrotikConfigUrl: (id: number) => buildSameOriginApiUrl(`/api/peers/${id}/config/mikrotik`),
 
-  qrcodeUrl: (id: number) => `/api/peers/${id}/qrcode`,
+  qrcodeUrl: (id: number) => buildSameOriginApiUrl(`/api/peers/${id}/qrcode`),
 
   getPermissions: (id: number) =>
     client.get<PermissionSummary>(`/peers/${id}/permissions`),

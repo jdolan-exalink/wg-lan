@@ -27,8 +27,10 @@ export interface Policy {
   id: number;
   source_group_id: number;
   source_group_name: string | null;
-  dest_group_id: number;
+  dest_group_id: number | null;
   dest_group_name: string | null;
+  dest_ip_group_id: number | null;
+  dest_ip_group_name: string | null;
   direction: "outbound" | "inbound" | "both";
   action: "allow" | "deny";
   enabled: boolean;

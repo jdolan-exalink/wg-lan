@@ -27,6 +27,33 @@ import {
 } from "lucide-react";
 import type { Peer } from "@/types/peer";
 
+type PeerConfigFormat = "standard" | "mikrotik";
+
+async function downloadPeerConfigFile(peer: Peer, format: PeerConfigFormat): Promise<void> {
+  const url = format === "mikrotik"
+    ? peersApi.mikrotikConfigUrl(peer.id)
+    : peersApi.configUrl(peer.id);
+  const filename = format === "mikrotik"
+    ? `${peer.name}-mikrotik.txt`
+    : `${peer.name}.conf`;
+
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 function PeerStatusDot({ peer }: { peer: Peer }) {
   if (peer.is_system) {
     return (
@@ -119,16 +146,20 @@ function QrCodeDialog({ peer, open, onOpenChange }: { peer: Peer | null; open: b
           {error && <p className="text-sm text-destructive">{error}</p>}
           {qrSrc && <img src={qrSrc} alt="QR code" className="max-w-xs border rounded" />}
           <div className="flex gap-2">
-            <a href={peersApi.configUrl(peer.id)} download={`${peer.name}.conf`}>
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4 mr-2" /> Standard (.conf)
-              </Button>
-            </a>
-            <a href={peersApi.mikrotikConfigUrl(peer.id)} download={`${peer.name}-mikrotik.txt`}>
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4 mr-2" /> MikroTik (.txt)
-              </Button>
-            </a>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void downloadPeerConfigFile(peer, "standard")}
+            >
+              <Download className="h-4 w-4 mr-2" /> Standard (.conf)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void downloadPeerConfigFile(peer, "mikrotik")}
+            >
+              <Download className="h-4 w-4 mr-2" /> MikroTik (.txt)
+            </Button>
           </div>
         </div>
       </DialogContent>
@@ -410,17 +441,23 @@ export function PeersPage() {
                       </Button>
                       {!p.is_system && (
                         <>
-                          <a href={peersApi.configUrl(p.id)} download={`${p.name}.conf`}>
-                            <Button variant="ghost" size="icon" title="Download standard config">
-                              <Download className="h-4 w-4" />
-                            </Button>
-                          </a>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Download standard config"
+                            onClick={() => void downloadPeerConfigFile(p, "standard")}
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
                           {p.peer_type !== "roadwarrior" && (
-                            <a href={peersApi.mikrotikConfigUrl(p.id)} download={`${p.name}-mikrotik.txt`}>
-                              <Button variant="ghost" size="icon" title="Download MikroTik RouterOS commands">
-                                <Router className="h-4 w-4" />
-                              </Button>
-                            </a>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Download MikroTik RouterOS commands"
+                              onClick={() => void downloadPeerConfigFile(p, "mikrotik")}
+                            >
+                              <Router className="h-4 w-4" />
+                            </Button>
                           )}
                           {p.peer_type !== "branch_office" && (
                             <Button variant="ghost" size="icon" title="Show QR" onClick={() => setQrPeer(p)}>
@@ -676,12 +713,20 @@ function RoadWarriorWizard({ onDone, onCancel }: { onDone: () => void; onCancel:
                 Peer <strong>{createdPeer.name}</strong> created — IP: <code>{createdPeer.assigned_ip}</code>
               </div>
               <div className="flex gap-2">
-                <a href={peersApi.configUrl(createdPeer.id)} download={`${createdPeer.name}.conf`}>
-                  <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Standard .conf</Button>
-                </a>
-                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.txt`}>
-                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik (.txt)</Button>
-                </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void downloadPeerConfigFile(createdPeer, "standard")}
+                >
+                  <Download className="h-4 w-4" /> Standard .conf
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void downloadPeerConfigFile(createdPeer, "mikrotik")}
+                >
+                  <Router className="h-4 w-4" /> MikroTik (.txt)
+                </Button>
                 <Button size="sm" variant="outline" onClick={() => setShowQr(true)}>
                   <QrCode className="h-4 w-4" /> View QR
                 </Button>
@@ -828,12 +873,20 @@ function BranchOfficeWizard({ onDone, onCancel }: { onDone: () => void; onCancel
                 Branch office <strong>{createdPeer.name}</strong> created — VPN IP: <code>{createdPeer.assigned_ip}</code>
               </div>
               <div className="flex gap-2">
-                <a href={peersApi.configUrl(createdPeer.id)} download={`${createdPeer.name}.conf`}>
-                  <Button size="sm" variant="outline"><Download className="h-4 w-4" /> Standard .conf</Button>
-                </a>
-                <a href={peersApi.mikrotikConfigUrl(createdPeer.id)} download={`${createdPeer.name}-mikrotik.txt`}>
-                  <Button size="sm" variant="outline"><Router className="h-4 w-4" /> MikroTik (.txt)</Button>
-                </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void downloadPeerConfigFile(createdPeer, "standard")}
+                >
+                  <Download className="h-4 w-4" /> Standard .conf
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void downloadPeerConfigFile(createdPeer, "mikrotik")}
+                >
+                  <Router className="h-4 w-4" /> MikroTik (.txt)
+                </Button>
                 <Button size="sm" onClick={onDone}>Done</Button>
               </div>
             </div>

@@ -10,17 +10,15 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import audit, auth, connection_logs, dashboard, groups, networks, onboarding, peers, policies, system, users, version
+from app.routers import audit, auth, connection_logs, dashboard, groups, networks, onboarding, peers, policies, speedtest, system, users, version
 from app.routers.devices import router as devices_router
 from app.routers.client import router as client_router
+from app.routers.ip_groups import router as ip_groups_router
 from app.services.auth_service import create_admin_user, create_server_config
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create all tables (Alembic handles migrations, this is a safety net)
-    Base.metadata.create_all(bind=engine)
-
     # Seed defaults if not present
     db = SessionLocal()
     try:
@@ -61,6 +59,8 @@ app.include_router(peers.router)
 app.include_router(networks.router)
 app.include_router(groups.router)
 app.include_router(policies.router)
+app.include_router(ip_groups_router)
+app.include_router(speedtest.router)
 app.include_router(system.router)
 app.include_router(audit.router)
 app.include_router(users.router)

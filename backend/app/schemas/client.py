@@ -12,6 +12,7 @@ class ClientLoginRequest(BaseModel):
     password: str = Field(..., min_length=1)
     device_fingerprint: Optional[str] = None
     os: Optional[str] = None  # Client-reported OS: windows, macos, linux, android, ios
+    auth_method: str = "auto"  # "auto", "local", "ad"
 
 
 class ClientLoginResponse(BaseModel):

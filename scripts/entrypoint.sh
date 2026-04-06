@@ -26,8 +26,7 @@ python -m alembic upgrade head
 # Create initial admin user + server config (idempotent)
 echo "==> Initialising defaults..."
 python -c "
-from app.database import SessionLocal, Base, engine
-Base.metadata.create_all(bind=engine)
+from app.database import SessionLocal
 db = SessionLocal()
 from app.services.auth_service import create_admin_user, create_server_config, create_vpn_server_peer
 create_admin_user(db)
@@ -108,6 +107,27 @@ import uvicorn
 import threading
 from app.config import settings
 
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'default': {
+            'format': '%(asctime)s %(levelname)-8s %(name)s: %(message)s',
+        },
+    },
+    'handlers': {
+        'default': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'default',
+            'stream': 'ext://sys.stdout',
+        },
+    },
+    'root': {
+        'handlers': ['default'],
+        'level': 'INFO',
+    },
+}
+
 # 1. Client API server (HTTP, dedicated port)
 client_api_config = uvicorn.Config(
     'app.client_app:app',
@@ -115,7 +135,7 @@ client_api_config = uvicorn.Config(
     port=settings.client_api_port,
     workers=1,
     loop='asyncio',
-    log_config=None,
+    log_config=LOGGING_CONFIG,
 )
 
 # 2. Client API server (HTTPS, dedicated port)
@@ -127,7 +147,7 @@ client_api_tls_config = uvicorn.Config(
     ssl_keyfile=settings.tls_key_path,
     ssl_certfile=settings.tls_cert_path,
     loop='asyncio',
-    log_config=None,
+    log_config=LOGGING_CONFIG,
 )
 
 # 3. Dashboard HTTP server
@@ -137,7 +157,7 @@ http_config = uvicorn.Config(
     port=settings.http_port,
     workers=1,
     loop='asyncio',
-    log_config=None,
+    log_config=LOGGING_CONFIG,
 )
 
 # 4. Dashboard HTTPS server
@@ -149,7 +169,7 @@ https_config = uvicorn.Config(
     ssl_keyfile=settings.tls_key_path,
     ssl_certfile=settings.tls_cert_path,
     loop='asyncio',
-    log_config=None,
+    log_config=LOGGING_CONFIG,
 )
 
 def run_server(config, name):

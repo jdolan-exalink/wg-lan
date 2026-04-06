@@ -11,16 +11,17 @@ Compiles groups/policies into a concrete list of allowed CIDRs for a given peer.
   - `outbound`: source group can reach dest group's networks
   - `inbound`: dest group can reach source group's networks
   - `both`: bidirectional access
+- **IP Group Policies**: source group → specific IPs (not entire networks)
 
 Precedence (deny-first):
   1. deny_override     (peer_overrides action='deny') — always wins
   2. deny_user         (user_network_access action='deny') — user-level deny
   3. deny_group        (group_network_access action='deny') — group-level deny
-  4. deny_policy       (policies action='deny') — policy-level deny
+  4. deny_policy       (policies action='deny') — policy-level deny (group or ip-group)
   5. allow_user        (user_network_access action='allow') — user-level allow
   6. allow_group       (group_network_access action='allow') — group-level allow
   7. allow_manual      (peer_overrides action='allow', peer_network_access) — peer-level allow
-  8. allow_policy      (policies action='allow') — policy-level allow
+  8. allow_policy      (policies action='allow') — policy-level allow (group or ip-group)
   9. allow_all         (default: if peer has NO groups/assignments/overrides, allow everything)
 """
 
@@ -34,6 +35,7 @@ from app.models.peer import Peer, PeerNetworkAccess, PeerOverride
 from app.models.network import Network
 from app.models.server_config import ServerConfig
 from app.models.user import UserNetworkAccess
+from app.models.ip_group import IpGroup, IpGroupEntry
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +129,8 @@ def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = Fals
     # Step 4: Collect group-level policies
     allowed_network_ids: set[int] = set(direct_allow_networks)
     blocked_network_ids: set[int] = set()
+    allowed_ips: set[str] = set()
+    blocked_ips: set[str] = set()
 
     if group_ids:
         # Outbound policies: peer's group can reach dest group's networks
@@ -144,18 +148,33 @@ def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = Fals
         ).all()
         
         for p in outbound_policies:
-            dest_member_networks = _get_group_networks(db, p.dest_group_id)
-            if p.action == "allow":
-                allowed_network_ids.update(dest_member_networks)
-            elif p.action == "deny":
-                blocked_network_ids.update(dest_member_networks)
+            if p.dest_ip_group_id:
+                # IP group policy: resolve to individual IPs
+                ips = _get_ip_group_cidrs(db, p.dest_ip_group_id)
+                if p.action == "allow":
+                    allowed_ips.update(ips)
+                elif p.action == "deny":
+                    blocked_ips.update(ips)
+            elif p.dest_group_id:
+                dest_member_networks = _get_group_networks(db, p.dest_group_id)
+                if p.action == "allow":
+                    allowed_network_ids.update(dest_member_networks)
+                elif p.action == "deny":
+                    blocked_network_ids.update(dest_member_networks)
         
         for p in inbound_policies:
-            source_member_networks = _get_group_networks(db, p.source_group_id)
-            if p.action == "allow":
-                allowed_network_ids.update(source_member_networks)
-            elif p.action == "deny":
-                blocked_network_ids.update(source_member_networks)
+            if p.dest_ip_group_id:
+                ips = _get_ip_group_cidrs(db, p.dest_ip_group_id)
+                if p.action == "allow":
+                    allowed_ips.update(ips)
+                elif p.action == "deny":
+                    blocked_ips.update(ips)
+            elif p.dest_group_id:
+                source_member_networks = _get_group_networks(db, p.source_group_id)
+                if p.action == "allow":
+                    allowed_network_ids.update(source_member_networks)
+                elif p.action == "deny":
+                    blocked_network_ids.update(source_member_networks)
 
     # Step 5: Apply precedence (deny-first)
     # Precedence: deny_user > deny_group > deny_policy > allow_user > allow_group > allow_policy > allow_manual
@@ -198,23 +217,35 @@ def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = Fals
         if network_id in allowed_network_ids:
             final_network_ids.add(network_id)  # policy-level allow
 
-    # Step 6: Resolve network IDs to CIDRs
-    if not final_network_ids:
+    # Resolve network IDs to CIDRs
+    final_cidrs: set[str] = set()
+    if final_network_ids:
+        networks = db.query(Network).filter(Network.id.in_(final_network_ids)).all()
+        final_cidrs.update(n.subnet for n in networks)
+
+    # Apply IP-level denies: remove any /32 that is blocked
+    # Apply IP-level allows: add /32 CIDRs that are not blocked
+    for ip in allowed_ips:
+        if ip not in blocked_ips:
+            final_cidrs.add(ip)
+
+    if not final_network_ids and not allowed_ips:
         peer = db.query(Peer).filter(Peer.id == peer_id).first()
         peer_name = peer.name if peer else f"peer-{peer_id}"
         logger.warning(f"Peer {peer_name} ({peer_id}): BLOCKED - no networks allowed (groups: {group_ids})")
         return []
 
-    networks = db.query(Network).filter(Network.id.in_(final_network_ids)).all()
-    cidrs = sorted({n.subnet for n in networks})
+    cidrs = sorted(final_cidrs)
     
     peer = db.query(Peer).filter(Peer.id == peer_id).first()
     peer_name = peer.name if peer else f"peer-{peer_id}"
     
-    logger.info(f"Peer {peer_name} ({peer_id}): ALLOWED networks: {[(n.name, n.subnet) for n in networks]}")
+    logger.info(f"Peer {peer_name} ({peer_id}): ALLOWED networks: {cidrs}")
     if blocked_network_ids:
         blocked_nets = db.query(Network).filter(Network.id.in_(blocked_network_ids)).all()
         logger.warning(f"Peer {peer_name} ({peer_id}): BLOCKED networks: {[(n.name, n.subnet) for n in blocked_nets]}")
+    if blocked_ips:
+        logger.warning(f"Peer {peer_name} ({peer_id}): BLOCKED IPs: {blocked_ips}")
     logger.info(f"Peer {peer_name} ({peer_id}): Final CIDRs: {cidrs}")
     
     return cidrs
@@ -241,6 +272,14 @@ def _get_group_networks(db: Session, group_id: int) -> set[int]:
     network_ids.update(row[0] for row in orphaned)
     
     return network_ids
+
+
+def _get_ip_group_cidrs(db: Session, ip_group_id: int) -> set[str]:
+    """Get all individual IP addresses from an IP group as /32 CIDRs."""
+    entries = db.query(IpGroupEntry).filter(
+        IpGroupEntry.ip_group_id == ip_group_id
+    ).all()
+    return {f"{e.ip_address}/32" for e in entries}
 
 
 def compile_peer_routes(db: Session, peer_id: int) -> list[str]:

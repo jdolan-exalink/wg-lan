@@ -23,6 +23,7 @@ def create_policy(db: Session, data: PolicyCreate) -> Policy:
     existing = db.query(Policy).filter(
         Policy.source_group_id == data.source_group_id,
         Policy.dest_group_id == data.dest_group_id,
+        Policy.dest_ip_group_id == data.dest_ip_group_id,
         Policy.direction == data.direction,
     ).first()
     
@@ -36,6 +37,7 @@ def create_policy(db: Session, data: PolicyCreate) -> Policy:
     policy = Policy(
         source_group_id=data.source_group_id,
         dest_group_id=data.dest_group_id,
+        dest_ip_group_id=data.dest_ip_group_id,
         direction=data.direction,
         action=data.action,
         position=max_pos + 1,
