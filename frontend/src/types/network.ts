@@ -5,6 +5,7 @@ export interface Network {
   description: string | null;
   network_type: "lan" | "vpn";
   is_default: boolean;
+  nat_enabled: boolean;
   peer_id: number | null;
   peer_count: number;
   peers: Array<{

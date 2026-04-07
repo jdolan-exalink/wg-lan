@@ -4,7 +4,7 @@ import type { Peer } from "@/types/peer";
 
 export const networksApi = {
   list: () => client.get<Network[]>("/networks"),
-  create: (data: { name: string; subnet: string; description?: string; network_type?: string; is_default?: boolean; peer_id?: number | null }) =>
+  create: (data: { name: string; subnet: string; description?: string; network_type?: string; is_default?: boolean; nat_enabled?: boolean; peer_id?: number | null }) =>
     client.post<Network>("/networks", data),
   update: (id: number, data: Partial<Network>) => client.patch<Network>(`/networks/${id}`, data),
   delete: (id: number) => client.delete(`/networks/${id}`),

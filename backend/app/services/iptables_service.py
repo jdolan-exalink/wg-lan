@@ -56,6 +56,7 @@ def _get_server_ip(iface: str) -> str | None:
                 return line.split()[1].split("/")[0]
     return None
 
+
 def _ensure_chains():
     """Create custom chains if they don't exist."""
     # Create FORWARD chain
@@ -154,13 +155,13 @@ def apply_iptables_rules(db: Session) -> None:
         if result.returncode != 0:
             break
     
-    # Remove ALL SNAT rules to our server IP from POSTROUTING (including stale ones)
-    # We parse the rules and delete by line number to handle any source subnet
+    # Remove ALL managed POSTROUTING rules: SNAT rules to our server IP and
+    # RETURN rules (NAT bypass rules for nat_enabled=False networks).
+    # Parse and delete by line number so we handle any source/dest combo.
     result = _run(["iptables", "-t", "nat", "-S", "POSTROUTING"])
     if result.returncode == 0:
-        # Collect line numbers of SNAT rules to our server IP (in reverse order)
         # Note: -S output includes the policy line (-P POSTROUTING ACCEPT) which is NOT a real rule
-        # Real rules are -A lines, and their position in the -S output (0-indexed, skipping -P) matches iptables line numbers
+        # Real rules are -A lines; position in -S output (skipping -P) matches iptables line numbers
         stale_lines = []
         rule_num = 0
         for line in result.stdout.strip().splitlines():
@@ -169,11 +170,14 @@ def apply_iptables_rules(db: Session) -> None:
             rule_num += 1
             if "SNAT" in line and f"--to-source {server_ip}" in line:
                 stale_lines.append(rule_num)
-        
+            elif "-j RETURN" in line:
+                # All RETURN rules in POSTROUTING are ours (no other service adds them)
+                stale_lines.append(rule_num)
+
         # Delete in reverse order so line numbers don't shift
         for line_num in reversed(stale_lines):
             _run(["iptables", "-t", "nat", "-D", "POSTROUTING", str(line_num)])
-            logger.info(f"Removed stale SNAT rule at line {line_num}")
+            logger.info(f"Removed stale NAT rule at line {line_num}")
 
     while True:
         result = _run([
@@ -274,31 +278,38 @@ def apply_iptables_rules(db: Session) -> None:
 
     
     # === POSTROUTING rules ===
-    # IMPORTANT: Insert SNAT rules at the TOP of POSTROUTING (before any MASQUERADE)
-    # This ensures branch office traffic gets SNAT'd before MASQUERADE can change the source
-    for subnet in branch_subnets:
+    # Order matters:
+    #   1. RETURN rules for nat_enabled=False networks  (top — run before SNAT and MASQUERADE)
+    #   2. SNAT rules for branch office subnets         (return traffic routing)
+    #   3. MASQUERADE for VPN subnet                    (catch-all for internet)
+    #
+    # RETURN rules have no source constraint so they apply to traffic from VPN clients
+    # AND branch office subnets going to those destinations.
+    from app.models.network import Network as NetworkModel
+    no_nat_networks = db.query(NetworkModel).filter(NetworkModel.nat_enabled == False).all()
+    # Insert in reverse order at position 1 so final order is preserved
+    for net in reversed(no_nat_networks):
         _run([
             "iptables", "-t", "nat", "-I", "POSTROUTING", "1",
+            "-d", net.subnet,
+            "-j", "RETURN",
+        ])
+        logger.info(f"RETURN rule: any -> {net.subnet} ({net.name}, NAT disabled)")
+
+    # IMPORTANT: SNAT rules must come AFTER RETURN rules but BEFORE MASQUERADE.
+    # Use -A (append) so SNAT rules land after all RETURN rules already in the chain.
+    # MASQUERADE is added with -A afterwards, so the final order is:
+    #   1. RETURN rules  (nat_enabled=False networks — bypass NAT for local LANs)
+    #   2. SNAT rules    (branch office return-traffic routing)
+    #   3. MASQUERADE    (catch-all outbound NAT)
+    for subnet in branch_subnets:
+        _run([
+            "iptables", "-t", "nat", "-A", "POSTROUTING",
             "-s", subnet,
             "-o", outbound_iface,
             "-j", "SNAT", "--to-source", server_ip
         ])
         logger.info(f"🟢 SNAT rule: {subnet} -> {server_ip} (return traffic routing)")
-        
-        # Log to database for UI display
-        connection_log_service.log_connection(
-            db=db,
-            event_type="iptables_applied",
-            message=f"SNAT: {subnet} -> {server_ip}",
-            severity="info",
-            details={
-                "rule_type": "SNAT",
-                "source": subnet,
-                "destination": outbound_iface,
-                "action": f"to:{server_ip}",
-                "purpose": "Return traffic routing for branch office"
-            }
-        )
 
     _run([
         "iptables", "-t", "nat", "-A", "POSTROUTING",

@@ -9,6 +9,7 @@ class NetworkCreate(BaseModel):
     description: str | None = None
     network_type: str = "lan"
     is_default: bool = False
+    nat_enabled: bool = True
     peer_id: int | None = None
 
     @field_validator("subnet")
@@ -24,6 +25,7 @@ class NetworkUpdate(BaseModel):
     description: str | None = None
     network_type: str | None = None
     is_default: bool | None = None
+    nat_enabled: bool | None = None
     peer_id: int | None = None
 
 
@@ -34,6 +36,7 @@ class NetworkResponse(BaseModel):
     description: str | None
     network_type: str
     is_default: bool
+    nat_enabled: bool = True
     peer_id: int | None = None
     peer_count: int = 0
     peers: list[dict] = []

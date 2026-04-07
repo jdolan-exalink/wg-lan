@@ -24,7 +24,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Globe, Building2, ChevronDown, ChevronRight, Router, Server, Laptop, Smartphone, User, X, ArrowRight, Info, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Globe, Building2, ChevronDown, ChevronRight, Router, Server, Laptop, Smartphone, User, X, ArrowRight, Info, CheckCircle2, ShieldOff, Shield } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import type { Network } from "@/types/network";
 import type { Peer } from "@/types/peer";
 
@@ -34,6 +35,7 @@ const schema = z.object({
   description: z.string().optional(),
   network_type: z.enum(["lan", "vpn"]).default("lan"),
   is_default: z.boolean().default(false),
+  nat_enabled: z.boolean().default(true),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -144,6 +146,18 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
     onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
   });
 
+  const toggleNat = useMutation({
+    mutationFn: ({ id, nat_enabled }: { id: number; nat_enabled: boolean }) =>
+      networksApi.update(id, { nat_enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
+  });
+
+  const setGateway = useMutation({
+    mutationFn: ({ id, peer_id }: { id: number; peer_id: number | null }) =>
+      networksApi.update(id, { peer_id }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
+  });
+
   const removePeer = useMutation({
     mutationFn: ({ networkId, peerId }: { networkId: number; peerId: number }) =>
       networksApi.removePeer(networkId, peerId),
@@ -175,6 +189,21 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
           </Badge>
         </td>
         <td className="px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={network.nat_enabled}
+              onCheckedChange={(checked) => toggleNat.mutate({ id: network.id, nat_enabled: checked })}
+              disabled={toggleNat.isPending}
+            />
+            <span className="text-xs text-muted-foreground">
+              {network.nat_enabled
+                ? <span className="flex items-center gap-1 text-green-600"><Shield className="h-3 w-3" />NAT</span>
+                : <span className="flex items-center gap-1 text-amber-600"><ShieldOff className="h-3 w-3" />Sin NAT</span>
+              }
+            </span>
+          </div>
+        </td>
+        <td className="px-4 py-3">
           <GatewayBadge peerId={network.peer_id} allPeers={allPeers} />
         </td>
         <td className="px-4 py-3">
@@ -195,14 +224,37 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
       </tr>
       {expanded && (
         <tr className="bg-muted/10">
-          <td colSpan={6} className="px-4 py-3">
+          <td colSpan={7} className="px-4 py-3">
             <div className="ml-6 space-y-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Router className="h-3.5 w-3.5" />
-                <span>Gateway:</span>
-                <GatewayBadge peerId={network.peer_id} allPeers={allPeers} />
-                <ArrowRight className="h-3 w-3 mx-1" />
-                <span>Red:</span>
+              <div className="flex items-center gap-2 text-xs">
+                <Router className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-muted-foreground">Gateway:</span>
+                <Select
+                  value={network.peer_id?.toString() ?? "__none__"}
+                  onValueChange={(v) =>
+                    setGateway.mutate({ id: network.id, peer_id: v === "__none__" ? null : parseInt(v) })
+                  }
+                >
+                  <SelectTrigger className="h-6 text-xs w-52">
+                    <SelectValue placeholder="Sin gateway" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">
+                      <span className="text-muted-foreground">Sin gateway</span>
+                    </SelectItem>
+                    {allPeers.map((p) => (
+                      <SelectItem key={p.id} value={p.id.toString()}>
+                        <div className="flex items-center gap-2">
+                          {peerTypeIcons[p.device_type ?? p.peer_type]}
+                          <span>{p.name}</span>
+                          <span className="font-mono text-xs text-muted-foreground">{p.assigned_ip}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <ArrowRight className="h-3 w-3 mx-1 text-muted-foreground" />
+                <span className="text-muted-foreground">Red:</span>
                 <span className="font-mono text-primary">{network.subnet}</span>
               </div>
               <div className="border-t border-muted-foreground/10 pt-2">
@@ -265,7 +317,7 @@ export function NetworksPage() {
 
   const { register, handleSubmit, formState: { errors, isSubmitting }, reset, setValue, watch } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { network_type: "lan" },
+    defaultValues: { network_type: "lan", nat_enabled: true },
   });
 
   const onSubmit = async (data: FormData) => {
@@ -411,6 +463,17 @@ export function NetworksPage() {
                     <Label>Descripción</Label>
                     <Input placeholder="Opcional" {...register("description")} />
                   </div>
+                  <div className="col-span-2 flex items-center gap-3 py-1">
+                    <Switch
+                      id="nat_enabled"
+                      checked={watch("nat_enabled") ?? true}
+                      onCheckedChange={(v) => setValue("nat_enabled", v)}
+                    />
+                    <div>
+                      <Label htmlFor="nat_enabled" className="cursor-pointer">NAT habilitado</Label>
+                      <p className="text-xs text-muted-foreground">Desactivar si los clientes VPN deben llegar con su IP real (ej: telefonía IP, rutas estáticas de ambos lados)</p>
+                    </div>
+                  </div>
                   <div className="col-span-2 flex gap-2">
                     <Button type="submit" size="sm" disabled={isSubmitting}>Guardar</Button>
                     <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancelar</Button>
@@ -428,6 +491,7 @@ export function NetworksPage() {
                 <th className="text-left px-4 py-2 font-medium">Red</th>
                 <th className="text-left px-4 py-2 font-medium">Subnet</th>
                 <th className="text-left px-4 py-2 font-medium">Tipo</th>
+                <th className="text-left px-4 py-2 font-medium">NAT</th>
                 <th className="text-left px-4 py-2 font-medium">Gateway (BOVPN)</th>
                 <th className="text-left px-4 py-2 font-medium">Acceso</th>
                 <th className="px-4 py-2" />
@@ -435,7 +499,7 @@ export function NetworksPage() {
             </thead>
             <tbody>
               {lanNetworks.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                   <div className="flex flex-col items-center gap-2">
                     <Building2 className="h-6 w-6 text-muted-foreground/30" />
                     <p>No hay redes LAN registradas</p>
@@ -464,6 +528,7 @@ export function NetworksPage() {
                   <th className="text-left px-4 py-2 font-medium">Red</th>
                   <th className="text-left px-4 py-2 font-medium">Subnet</th>
                   <th className="text-left px-4 py-2 font-medium">Tipo</th>
+                  <th className="text-left px-4 py-2 font-medium">NAT</th>
                   <th className="text-left px-4 py-2 font-medium">Gateway</th>
                   <th className="text-left px-4 py-2 font-medium">Acceso</th>
                   <th className="px-4 py-2" />
