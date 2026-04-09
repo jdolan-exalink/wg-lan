@@ -173,6 +173,9 @@ def apply_iptables_rules(db: Session) -> None:
             elif "-j RETURN" in line:
                 # All RETURN rules in POSTROUTING are ours (no other service adds them)
                 stale_lines.append(rule_num)
+            elif "-j MASQUERADE" in line and settings.subnet in line:
+                # Per-network and global MASQUERADE rules we own (identified by our VPN subnet as source)
+                stale_lines.append(rule_num)
 
         # Delete in reverse order so line numbers don't shift
         for line_num in reversed(stale_lines):
@@ -280,8 +283,9 @@ def apply_iptables_rules(db: Session) -> None:
     # === POSTROUTING rules ===
     # Order matters:
     #   1. RETURN rules for nat_enabled=False networks  (top — run before SNAT and MASQUERADE)
-    #   2. SNAT rules for branch office subnets         (return traffic routing)
-    #   3. MASQUERADE for VPN subnet                    (catch-all for internet)
+    #   2. Per-network MASQUERADE for nat_enabled=True  (works for any outgoing interface, including wg0)
+    #   3. SNAT rules for branch office subnets         (return traffic routing)
+    #   4. MASQUERADE for VPN subnet on eth0            (catch-all for internet access)
     #
     # RETURN rules have no source constraint so they apply to traffic from VPN clients
     # AND branch office subnets going to those destinations.
@@ -296,12 +300,26 @@ def apply_iptables_rules(db: Session) -> None:
         ])
         logger.info(f"RETURN rule: any -> {net.subnet} ({net.name}, NAT disabled)")
 
-    # IMPORTANT: SNAT rules must come AFTER RETURN rules but BEFORE MASQUERADE.
-    # Use -A (append) so SNAT rules land after all RETURN rules already in the chain.
+    # Per-network MASQUERADE for nat_enabled=True networks.
+    # No -o restriction so this applies regardless of outgoing interface (eth0, eth1, wg0, etc.).
+    # This is necessary for branch office subnets that exit via wg0, not eth0.
+    nat_networks = db.query(NetworkModel).filter(NetworkModel.nat_enabled == True).all()
+    for net in nat_networks:
+        _run([
+            "iptables", "-t", "nat", "-A", "POSTROUTING",
+            "-s", settings.subnet,
+            "-d", net.subnet,
+            "-j", "MASQUERADE",
+        ])
+        logger.info(f"MASQUERADE rule: {settings.subnet} -> {net.subnet} ({net.name}, NAT enabled)")
+
+    # IMPORTANT: SNAT rules must come AFTER RETURN/MASQUERADE rules but BEFORE the catch-all.
+    # Use -A (append) so SNAT rules land after all RETURN/MASQUERADE rules already in the chain.
     # MASQUERADE is added with -A afterwards, so the final order is:
-    #   1. RETURN rules  (nat_enabled=False networks — bypass NAT for local LANs)
-    #   2. SNAT rules    (branch office return-traffic routing)
-    #   3. MASQUERADE    (catch-all outbound NAT)
+    #   1. RETURN rules            (nat_enabled=False networks — bypass NAT)
+    #   2. Per-network MASQUERADE  (nat_enabled=True — NAT for specific destinations)
+    #   3. SNAT rules              (branch office return-traffic routing)
+    #   4. MASQUERADE              (catch-all outbound NAT for internet)
     for subnet in branch_subnets:
         _run([
             "iptables", "-t", "nat", "-A", "POSTROUTING",
