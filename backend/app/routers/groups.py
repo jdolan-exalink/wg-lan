@@ -22,14 +22,8 @@ router = APIRouter(prefix="/api/groups", tags=["groups"])
 
 
 def _apply_group_changes(db: Session) -> None:
-    """Re-apply iptables rules immediately after any group change.
-    Group membership changes only affect server-side iptables enforcement;
-    client configs are static so no wg syncconf is needed."""
-    try:
-        iptables_service.apply_iptables_rules(db)
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"iptables re-apply failed: {e}")
+    from app.services.sync_service import apply_permission_changes
+    apply_permission_changes(db)
 
 
 @router.get("", response_model=list[PeerGroupResponse])

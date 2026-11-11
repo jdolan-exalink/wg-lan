@@ -25,6 +25,11 @@ export interface Peer {
   revoked_at: string | null;
   is_online: boolean;
   sync_status: SyncStatus;
+  sync_message: string;
+  config_revision: number;
+  applied_config_revision: number | null;
+  last_config_applied_at: string | null;
+  last_config_downloaded_at: string | null;
 }
 
 export interface PeerStatus {

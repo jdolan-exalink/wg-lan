@@ -1,6 +1,6 @@
 # NetLoom
 
-Open-source WireGuard control plane with a web dashboard. Manage peers, define access zones, assign group-based policies, and compile `AllowedIPs` automatically — no manual CIDR editing.
+Open-source WireGuard control plane with a web dashboard. Manage peers, branch networks, Linux routes, and group-based access policies from a web dashboard.
 
 **Stack:** FastAPI · React · SQLite · Docker Compose
 
@@ -9,8 +9,8 @@ Open-source WireGuard control plane with a web dashboard. Manage peers, define a
 ## Features
 
 - **Guided peer onboarding** — RoadWarrior (mobile/laptop) and Branch Office (site-to-site) wizards
-- **Zone/Group access model** — define logical destinations, assign peers to groups, set policies per group
-- **Policy compiler** — compiles `AllowedIPs` from zones/groups/policies with deny-first precedence
+- **Network/Group access model** — define destinations, assign peers and users to groups, and set access policies
+- **Policy compiler** — compiles server-side access rules with deny-first precedence
 - **Live config sync** — `wg syncconf` keeps WireGuard running while applying changes
 - **QR codes** — scan from mobile to import peer config
 - **Auto-init** — server keypair and VPN subnet provisioned automatically on first run
@@ -236,3 +236,23 @@ NetLoom/
 ## License
 
 MIT
+
+## Routes and permission updates
+
+Open **Rutas** (`/routes`) to compare registered networks with Linux's IPv4 routing tables. The view shows the destination, next hop, interface, table, protocol, ownership, and missing/conflicting routes. Docker overlaps are reported explicitly.
+
+When creating a network, select a branch-office gateway or enter the IP of a directly connected router. NetLoom updates the branch's server-side AllowedIPs and installs the Linux route without restarting WireGuard. Directly connected LANs retain their kernel routes. Networks without a usable gateway stay visibly pending; NetLoom never guesses where to send them.
+
+NetLoom tags its routes with protocol **242**. Reconciliation runs after configuration changes, at startup, and periodically (`NETLOOM_CONFIG_SYNC_INTERVAL`, default 60 seconds). Disabling/deleting a branch removes its tagged routes. Existing exact wg-quick link routes for registered branch LANs are adopted; unrelated routes and the default gateway are preserved. `GET /api/routes` inspects routes; `POST /api/routes/reconcile` reapplies saved configuration. A failed application returns HTTP 503 with `saved: true, applied: false`, so a saved change cannot be mistaken for a successful live update.
+
+Split-tunnel clients receive transport routes independently of permissions, excluding their own branch LANs. Authorization is enforced by the hub **when the firewall is enabled**. User group membership affects existing peers directly; editing a user’s groups removes the historical automatic All membership from that user’s roadwarrior peers; direct user/peer assignments and explicit denials are evaluated even for peers without groups. Denials win; a peer with no assignments has no access. Unowned networks require explicit grants rather than being included in every group automatically. The Policies page previews effective permissions from saved policies before activation.
+
+Firewall changes replace only `NETLOOM-FWD` and `NETLOOM-POST` with `iptables-restore --noflush`, validated before application. Each table is committed atomically; filter and NAT commits are separate. Other services' chains are preserved. Revoking access deletes conntrack entries only for source/destination ranges that lost access, rather than disconnecting every peer. Initial migration removes only the exact legacy NAT rule shapes previously emitted for registered NetLoom networks.
+
+Configuration revisions are scoped to each peer. Clients poll `/api/v1/client/config/version`, retrieve `/config/delta?client_revision=N`, and fetch `/config` when a delta has `refresh_required: true`. After updating both WireGuard AllowedIPs and OS routes, the client sends `applied_revision` in `POST /api/v1/client/status`. Clients must implement that acknowledgement; older clients remain pending rather than falsely appearing synchronized. Heartbeats update presence, not download/application timestamps.
+
+For routers configured manually, click the configuration badge next to a peer. Download the current configuration or a MikroTik update script, enter the existing WireGuard interface name, apply it on the router, and explicitly confirm the revision. Update scripts preserve interfaces and keys and only replace routes bearing that peer's NetLoom comment. Earlier untagged manual routes must be reviewed separately. RouterOS needs its own routes in addition to allowed-address; see the [MikroTik WireGuard manual](https://manual.mikrotik.com/docs/virtual-private-networks/wireguard/).
+
+Adding a new LAN also requires updating existing unmanaged clients/routers so they can route to it. Server-side route creation cannot install routes on remote equipment automatically without a compatible client or remote management connection.
+
+Validation: run `pytest` in `backend/` and `npm run build` in `frontend/`. Routing/firewall regression tests mock OS mutations and cover network creation, gateway changes, disabled branches, foreign-route preservation, revocations, revisions, and application acknowledgements.

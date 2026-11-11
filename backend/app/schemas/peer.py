@@ -60,6 +60,10 @@ class PeerOverrideCreate(BaseModel):
     reason: str | None = None
 
 
+class ConfigAppliedRequest(BaseModel):
+    revision: int
+
+
 class PeerResponse(BaseModel):
     id: int
     name: str
@@ -82,6 +86,11 @@ class PeerResponse(BaseModel):
     revoked_at: str | None
     is_online: bool = False
     sync_status: str = "green"  # green, yellow, red
+    config_revision: int = 0
+    applied_config_revision: int | None = None
+    last_config_downloaded_at: str | None = None
+    last_config_applied_at: str | None = None
+    sync_message: str = ""
 
     model_config = {"from_attributes": True}
 
@@ -97,6 +106,8 @@ class PeerResponse(BaseModel):
             group_ids = [m.group_id for m in memberships]
 
         is_online = False
+        from app.services.sync_service import sync_state
+        sync_status, sync_message = sync_state(peer)
         if wg_status:
             is_online = wg_status.is_online
 
@@ -121,6 +132,11 @@ class PeerResponse(BaseModel):
             revoked_at=peer.revoked_at.isoformat() if peer.revoked_at else None,
             is_online=is_online,
             sync_status=sync_status,
+            sync_message=sync_message,
+            config_revision=peer.config_revision,
+            applied_config_revision=peer.applied_config_revision,
+            last_config_downloaded_at=peer.last_config_downloaded_at.isoformat() if peer.last_config_downloaded_at else None,
+            last_config_applied_at=peer.last_config_applied_at.isoformat() if peer.last_config_applied_at else None,
         )
 
 

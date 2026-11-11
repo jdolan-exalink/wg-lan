@@ -10,6 +10,7 @@ import { OnboardingWizard } from "@/components/auth/OnboardingWizard";
 import { IpGroupsPage } from "@/pages/IpGroupsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { PeersPage } from "@/pages/PeersPage";
+import { RoutesPage } from "@/pages/RoutesPage";
 import { NetworksPage } from "@/pages/NetworksPage";
 import { UsersPage } from "@/pages/UsersPage";
 import { GroupsPage } from "@/pages/GroupsPage";
@@ -66,6 +67,7 @@ export default function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/peers" element={<PeersPage />} />
               <Route path="/networks" element={<NetworksPage />} />
+              <Route path="/routes" element={<RoutesPage />} />
               <Route path="/ip-groups" element={<IpGroupsPage />} />
               <Route path="/users" element={<UsersPage />} />
               <Route path="/groups" element={<GroupsPage />} />

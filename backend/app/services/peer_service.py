@@ -135,7 +135,28 @@ def _create_peer_networks(db: Session, peer: Peer, remote_subnets: list[str] | N
         db.add(network)
 
 
-def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) -> Peer:
+def _validate_remote_subnets(db, subnets, peer_id=None):
+    import ipaddress
+    from app.models.server_config import ServerConfig
+    cfg = db.query(ServerConfig).first()
+    targets = [ipaddress.IPv4Network(s, strict=True) for s in subnets]
+    if len(targets) != len(set(targets)):
+        raise ValueError("Subredes duplicadas")
+    for i, target in enumerate(targets):
+        if cfg and target.overlaps(ipaddress.ip_network(cfg.address, strict=False)):
+            raise ValueError("La LAN se solapa con la red de túneles")
+        if any(target.overlaps(other) for other in targets[:i]):
+            raise ValueError("Las subredes de la sucursal se solapan")
+        for network in db.query(Network).all():
+            if network.peer_id == peer_id and peer_id is not None:
+                continue
+            if network.peer_id is None and network.gateway_ip is None and target == ipaddress.ip_network(network.subnet):
+                continue  # A previously registered, unassigned LAN can be claimed by its router.
+            if target.overlaps(ipaddress.ip_network(network.subnet)):
+                raise ValueError(f"La subred se solapa con {network.name}")
+
+
+def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int, owner_user_id: int | None = None) -> Peer:
     network_id = data.network_id or None
     if network_id:
         network = db.query(Network).filter(Network.id == network_id).first()
@@ -148,6 +169,7 @@ def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) ->
 
     peer = Peer(
         name=data.name,
+        user_id=owner_user_id,
         peer_type="roadwarrior",
         device_type=data.device_type,
         private_key=private_key,
@@ -164,7 +186,7 @@ def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) ->
     db.flush()
 
     group_ids = list(data.group_ids) if data.group_ids else []
-    if not group_ids:
+    if not group_ids and owner_user_id is None:
         all_group_id = _ensure_all_group(db)
         group_ids.append(all_group_id)
         _ensure_all_to_all_policy(db, all_group_id)
@@ -175,15 +197,13 @@ def create_roadwarrior(db: Session, data: RoadWarriorCreate, created_by: int) ->
     db.commit()
     db.refresh(peer)
 
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
 
     return peer
 
 
 def create_branch_office(db: Session, data: BranchOfficeCreate, created_by: int) -> Peer:
+    _validate_remote_subnets(db, data.remote_subnets)
     network_id = data.network_id or None
     if network_id:
         network = db.query(Network).filter(Network.id == network_id).first()
@@ -226,10 +246,7 @@ def create_branch_office(db: Session, data: BranchOfficeCreate, created_by: int)
     _bump_config_changed(db)
     db.commit()
 
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
 
     return peer
 
@@ -250,6 +267,9 @@ def update_peer(db: Session, peer: Peer, data: PeerUpdate) -> Peer:
     
     if "remote_subnets" in update_data:
         new_subnets = update_data.pop("remote_subnets")
+        if peer.peer_type != "branch_office":
+            raise ValueError("Sólo las sucursales pueden anunciar subredes")
+        _validate_remote_subnets(db, new_subnets, peer.id)
         old_subnets = json.loads(peer.remote_subnets) if peer.remote_subnets else []
         
         peer.remote_subnets = json.dumps(new_subnets)
@@ -263,7 +283,8 @@ def update_peer(db: Session, peer: Peer, data: PeerUpdate) -> Peer:
                 Network.peer_id == peer.id,
             ).first()
             if network:
-                db.delete(network)
+                from app.services.network_service import delete_network
+                delete_network(db, network)
         
         for subnet in added:
             existing = db.query(Network).filter(Network.subnet == subnet).first()
@@ -282,27 +303,26 @@ def update_peer(db: Session, peer: Peer, data: PeerUpdate) -> Peer:
     
     for key, value in update_data.items():
         setattr(peer, key, value)
+    if "remote_subnets" in data.model_fields_set:
+        peer.remote_subnets = json.dumps(data.remote_subnets)
     
     db.commit()
     db.refresh(peer)
     _bump_config_changed(db)
     db.commit()
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
     return peer
 
 
 def revoke_peer(db: Session, peer: Peer) -> None:
     if peer.is_system:
         raise ValueError("Cannot delete system peer (VPN server)")
+    from app.services.network_service import delete_network
+    for network in db.query(Network).filter(Network.peer_id == peer.id).all():
+        delete_network(db, network)
     db.delete(peer)
     db.commit()
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
 
 
 def toggle_peer(db: Session, peer: Peer) -> Peer:
@@ -311,10 +331,7 @@ def toggle_peer(db: Session, peer: Peer) -> Peer:
         peer.revoked_at = None
     db.commit()
     db.refresh(peer)
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
     return peer
 
 
@@ -324,10 +341,7 @@ def regenerate_keys(db: Session, peer: Peer) -> Peer:
     peer.public_key = public_key
     db.commit()
     db.refresh(peer)
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
     return peer
 
 
@@ -341,6 +355,8 @@ def upsert_override(db: Session, peer: Peer, data: PeerOverrideCreate) -> PeerOv
         existing.reason = data.reason
         db.commit()
         db.refresh(existing)
+        from app.services.sync_service import apply_permission_changes
+        apply_permission_changes(db)
         return existing
 
     override = PeerOverride(
@@ -352,6 +368,8 @@ def upsert_override(db: Session, peer: Peer, data: PeerOverrideCreate) -> PeerOv
     db.add(override)
     db.commit()
     db.refresh(override)
+    from app.services.sync_service import apply_permission_changes
+    apply_permission_changes(db)
     return override
 
 
@@ -364,4 +382,6 @@ def delete_override(db: Session, peer_id: int, network_id: int) -> bool:
         return False
     db.delete(override)
     db.commit()
+    from app.services.sync_service import apply_permission_changes
+    apply_permission_changes(db)
     return True

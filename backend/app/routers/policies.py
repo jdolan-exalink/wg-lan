@@ -11,16 +11,19 @@ from app.services import iptables_service
 
 
 def _apply_instant(db: Session) -> None:
-    """Re-apply iptables rules immediately. No wg syncconf needed since
-    client configs are static (all networks). Policy enforcement is purely
-    server-side, so this is the only operation required."""
-    try:
-        iptables_service.apply_iptables_rules(db)
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"iptables re-apply failed: {e}")
+    from app.services.sync_service import apply_permission_changes
+    apply_permission_changes(db)
 
 router = APIRouter(prefix="/api/policies", tags=["policies"])
+
+
+@router.get("/preview")
+def preview_permissions(db: Session = Depends(get_db), _: User = Depends(require_password_changed)):
+    from app.models.peer import Peer
+    from app.services.policy_compiler import compile_allowed_cidrs
+    return [{"peer_id": p.id, "name": p.name, "source": p.assigned_ip,
+             "allowed_cidrs": compile_allowed_cidrs(db, p.id, force_policies=True)}
+            for p in db.query(Peer).filter(Peer.is_enabled == True, Peer.peer_type != "server").all()]
 
 
 @router.get("/firewall-rules")
@@ -60,6 +63,20 @@ def create_policy(
     return policy
 
 
+@router.patch("/reorder", status_code=status.HTTP_200_OK)
+def reorder_policies(
+    ids: list[int],
+    db: Session = Depends(get_db),
+    _: User = Depends(require_password_changed),
+):
+    """Update policy positions from an ordered list of IDs (index = position)."""
+    for idx, policy_id in enumerate(ids):
+        db.query(Policy).filter(Policy.id == policy_id).update({"position": idx})
+    db.commit()
+    _apply_instant(db)
+    return {"ok": True}
+
+
 @router.patch("/{policy_id}", response_model=PolicyResponse)
 def update_policy(
     policy_id: int,
@@ -85,17 +102,3 @@ def delete_policy(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
     _apply_instant(db)
-
-
-@router.patch("/reorder", status_code=status.HTTP_200_OK)
-def reorder_policies(
-    ids: list[int],
-    db: Session = Depends(get_db),
-    _: User = Depends(require_password_changed),
-):
-    """Update policy positions from an ordered list of IDs (index = position)."""
-    for idx, policy_id in enumerate(ids):
-        db.query(Policy).filter(Policy.id == policy_id).update({"position": idx})
-    db.commit()
-    _apply_instant(db)
-    return {"ok": True}

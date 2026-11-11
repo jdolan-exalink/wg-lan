@@ -7,6 +7,7 @@ export interface Network {
   is_default: boolean;
   nat_enabled: boolean;
   peer_id: number | null;
+  gateway_ip: string | null;
   peer_count: number;
   peers: Array<{
     id: number;

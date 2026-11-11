@@ -91,6 +91,8 @@ export function PoliciesPage() {
     refetchInterval: 10_000,
   });
 
+  const preview = useQuery({ queryKey: ["permission-preview"], queryFn: () => policiesApi.preview().then(r => r.data) });
+
   // ── Staged state ────────────────────────────────────────────────────────────
   const [stagedPolicies, setStagedPolicies] = useState<StagedPolicy[]>([]);
   const [stagedFirewall, setStagedFirewall] = useState<boolean | null>(null);
@@ -239,10 +241,7 @@ export function PoliciesPage() {
     updateMutation.isPending || deleteMutation.isPending;
 
   const handleSave = async () => {
-    // 1. Firewall toggle
-    if (stagedFirewall !== null && stagedFirewall !== firewallStatus?.firewall_enabled) {
-      await setFirewallMutation.mutateAsync(stagedFirewall);
-    }
+    // Apply policies before enabling enforcement to avoid using an incomplete rule set.
     // 2. Deletes
     for (const p of stagedPolicies.filter((x) => x._pending === "delete" && x.id !== -1)) {
       await deleteMutation.mutateAsync(p.id);
@@ -268,6 +267,10 @@ export function PoliciesPage() {
       if (orderedIds.length > 0) await policiesApi.reorder(orderedIds);
       setPositionsChanged(false);
     }
+    if (stagedFirewall !== null && stagedFirewall !== firewallStatus?.firewall_enabled) {
+      await setFirewallMutation.mutateAsync(stagedFirewall);
+    }
+    qc.invalidateQueries({ queryKey: ["permission-preview"] });
     // Refresh
     qc.invalidateQueries({ queryKey: ["policies"] });
     qc.invalidateQueries({ queryKey: ["firewall-status"] });
@@ -321,6 +324,11 @@ export function PoliciesPage() {
         </CardContent>
       </Card>
 
+      <Card><CardHeader><CardTitle>Accesos efectivos con firewall activo</CardTitle><CardDescription>Vista de las políticas guardadas. Las denegaciones tienen prioridad; sin asignaciones se deniega el acceso. Los cambios sin guardar no aparecen aquí.</CardDescription></CardHeader><CardContent>
+        {preview.isLoading && <p>Calculando permisos…</p>}
+        {preview.error && <p role="alert" className="text-destructive">No se pudo calcular la vista previa de permisos.</p>}
+        <div className="max-h-80 overflow-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="p-2">Host</th><th className="p-2">Origen</th><th className="p-2">Destinos permitidos</th></tr></thead><tbody>{preview.data?.map(p => <tr key={p.peer_id} className="border-b"><td className="p-2">{p.name}</td><td className="p-2 font-mono text-xs">{p.source}</td><td className="p-2 font-mono text-xs">{p.allowed_cidrs.join(", ") || "Sin acceso"}</td></tr>)}</tbody></table></div>
+      </CardContent></Card>
       {/* ── Default rule banner (when firewall off) ─────────────────────────── */}
       {!firewallOn && (
         <div className="flex items-center gap-2 rounded-md border border-green-500/30 bg-green-500/5 px-4 py-3 text-sm text-green-700 dark:text-green-400">

@@ -1,3 +1,5 @@
+import { isAxiosError } from "axios";
+import { useAuth } from "@/contexts/AuthContext";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { peersApi } from "@/api/peers";
@@ -75,7 +77,7 @@ function PeerStatusDot({ peer }: { peer: Peer }) {
       <div className="flex items-center justify-center">
         <span
           className="h-3 w-3 rounded-full inline-block"
-          title="Conectado con versión anterior"
+          title={peer.sync_message || "Conectado; configuración pendiente de confirmación"}
           style={{ animation: "trafficLight 6s ease-in-out infinite" }}
         />
       </div>
@@ -165,6 +167,29 @@ function QrCodeDialog({ peer, open, onOpenChange }: { peer: Peer | null; open: b
       </DialogContent>
     </Dialog>
   );
+}
+
+function ConfigSyncDialog({ peer, close }: { peer: Peer; close: () => void }) {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  const [iface, setIface] = useState("");
+  const [error, setError] = useState("");
+  const ack = useMutation({ mutationFn: () => peersApi.acknowledgeConfig(peer.id, peer.config_revision), onSuccess: () => { qc.invalidateQueries({ queryKey: ["peers"] }); close(); } });
+  const downloadUpdate = async () => {
+    try {
+      const response = await peersApi.updateMikrotik(peer.id, iface);
+      const url = URL.createObjectURL(new Blob([response.data], { type: "text/plain" }));
+      const a = document.createElement("a"); a.href = url; a.download = `netloom-${peer.id}-actualizar-rutas.txt`; a.click(); URL.revokeObjectURL(url);
+      qc.invalidateQueries({ queryKey: ["peers"] });
+    } catch (e) { setError(isAxiosError(e) ? String(e.response?.data?.detail ?? e.message) : String(e)); }
+  };
+  return <Dialog open onOpenChange={v => { if (!v) close(); }}><DialogContent><DialogHeader><DialogTitle>Aplicar configuración — {peer.name}</DialogTitle><DialogDescription>Revisión {peer.config_revision}. {peer.sync_message}</DialogDescription></DialogHeader>
+    <p className="text-sm">Descargá y aplicá la configuración en el equipo. La descarga no confirma su aplicación. Los clientes compatibles pueden confirmar la revisión automáticamente.</p>
+    <Button variant="outline" onClick={() => void downloadPeerConfigFile(peer, "standard")}>Descargar configuración actual</Button>
+    {peer.peer_type === "branch_office" && <div className="space-y-2"><Label>Interfaz WireGuard existente en MikroTik</Label><Input value={iface} onChange={e => setIface(e.target.value)} placeholder="Ej.: wireguard1" /><Button variant="outline" onClick={() => void downloadUpdate()} disabled={!/^[a-zA-Z0-9_-]{1,32}$/.test(iface)}>Descargar actualización de rutas</Button><p className="text-xs text-muted-foreground">Actualiza el peer existente y reemplaza únicamente rutas con la marca de NetLoom. Revisá las rutas anteriores que se hayan creado manualmente.</p></div>}
+    {(error || ack.error) && <p role="alert" className="text-destructive text-sm">{error || (isAxiosError(ack.error) ? String(ack.error.response?.data?.detail ?? ack.error.message) : String(ack.error))}</p>}
+    {user?.is_admin && <Button onClick={() => ack.mutate()} disabled={ack.isPending || peer.config_revision <= 0}>Confirmar que apliqué la revisión {peer.config_revision}</Button>}
+  </DialogContent></Dialog>;
 }
 
 type WizardType = "roadwarrior" | "branch_office" | null;
@@ -272,6 +297,7 @@ const osIcons: Record<string, React.ReactNode> = {
 
 export function PeersPage() {
   const qc = useQueryClient();
+  const [syncPeer, setSyncPeer] = useState<Peer | null>(null);
   const [wizard, setWizard] = useState<WizardType>(null);
   const [qrPeer, setQrPeer] = useState<Peer | null>(null);
   const [editGroupsPeer, setEditGroupsPeer] = useState<Peer | null>(null);
@@ -331,6 +357,7 @@ export function PeersPage() {
 
   return (
     <div className="space-y-4">
+      {syncPeer && <ConfigSyncDialog peer={syncPeer} close={() => setSyncPeer(null)} />}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{peers.length} peer{peers.length !== 1 ? "s" : ""} configured</p>
         <div className="flex gap-2">
@@ -382,6 +409,7 @@ export function PeersPage() {
                     <div className="flex items-center gap-2">
                       {p.device_type && deviceIcons[p.device_type]}
                       <span className="font-medium">{p.name}</span>
+                      {!p.is_system && <Badge variant={p.sync_status === "green" ? "secondary" : "outline"} className="cursor-pointer" onClick={() => setSyncPeer(p)} title={p.sync_message}>{p.sync_status === "green" ? `Aplicada r${p.config_revision}` : p.last_config_downloaded_at ? "Aplicación pendiente" : "Sin descargar"}</Badge>}
                     </div>
                   </td>
                   <td className="px-4 py-2 text-muted-foreground capitalize">{p.peer_type.replace("_", " ")}</td>

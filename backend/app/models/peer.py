@@ -38,6 +38,10 @@ class Peer(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     last_config_hash: Mapped[str | None] = mapped_column(String, nullable=True)  # Hash of last downloaded config
+    desired_config_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    applied_config_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_config_applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_config_downloaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # When config was last downloaded
     os: Mapped[str | None] = mapped_column(String, nullable=True)  # Detected client OS: windows, macos, linux, android, ios
     description: Mapped[str | None] = mapped_column(String, nullable=True)  # User notes/description

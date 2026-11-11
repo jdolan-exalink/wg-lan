@@ -18,3 +18,10 @@ app = FastAPI(
 
 # Only include client-facing routes
 app.include_router(client_router)
+
+from fastapi.responses import JSONResponse
+from app.services.wg_service import ApplyError
+
+@app.exception_handler(ApplyError)
+async def apply_error_handler(request, exc):
+    return JSONResponse(status_code=503, content={"detail": str(exc), "saved": True, "applied": False})

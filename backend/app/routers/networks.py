@@ -22,11 +22,8 @@ def _apply_network_changes(db):
     """Bump config changed and apply WireGuard config after network changes."""
     _bump_config_changed(db)
     db.commit()
-    try:
-        from app.services import wg_service
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    from app.services import wg_service
+    wg_service.apply_config(db)
 
 
 @router.post("/apply", status_code=status.HTTP_200_OK)

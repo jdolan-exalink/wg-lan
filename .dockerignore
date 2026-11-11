@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+.aws
+.agents
+.codex
+.claude
+data
+config
+certs
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.venv
+backend/static
+frontend/tsconfig.tsbuildinfo
