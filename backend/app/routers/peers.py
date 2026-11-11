@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 import hashlib
 
 from app.database import get_db
-from app.dependencies import require_password_changed
+from app.dependencies import require_password_changed, require_admin
 from app.models.user import User
 from app.schemas.peer import (
     BranchOfficeCreate,
@@ -12,6 +12,7 @@ from app.schemas.peer import (
     PeerPermissionSummary,
     PeerResponse,
     PeerUpdate,
+    ConfigAppliedRequest,
     RoadWarriorCreate,
 )
 from app.schemas.group import AddMembersRequest
@@ -128,7 +129,10 @@ def update_peer(
     peer = peer_service.get_peer(db, peer_id)
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
-    peer = peer_service.update_peer(db, peer, body)
+    try:
+        peer = peer_service.update_peer(db, peer, body)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     return PeerResponse.from_orm_peer(peer, db=db)
 
 
@@ -154,11 +158,8 @@ def update_peer_groups(
     _bump_config_changed(db)
     db.commit()
     db.refresh(peer)
-    try:
-        from app.services import wg_service
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    from app.services import wg_service
+    wg_service.apply_config(db)
     return PeerResponse.from_orm_peer(peer, db=db)
 
 
@@ -257,6 +258,9 @@ def download_mikrotik_config(
     allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     
     config_str = generate_mikrotik_manual_commands(peer, server_cfg, allowed_cidrs)
+    from datetime import datetime, timezone
+    peer.last_config_downloaded_at = datetime.now(timezone.utc)
+    db.commit()
     
     filename = f"{peer.name.lower().replace(' ', '-')}-mikrotik.txt"
     return Response(
@@ -279,6 +283,9 @@ def get_qrcode(
     server_cfg = _get_server_config(db)
     allowed_cidrs = compile_client_allowed_ips(db, peer_id)
     config_str = generate_client_config(peer, server_cfg, allowed_cidrs)
+    from datetime import datetime, timezone
+    peer.last_config_downloaded_at = datetime.now(timezone.utc)
+    db.commit()
     png_bytes = generate_qr_png(config_str)
     return Response(content=png_bytes, media_type="image/png")
 
@@ -342,15 +349,8 @@ def get_sync_status(
     server_cfg = db.query(ServerConfig).first()
     config_changed_at = server_cfg.last_config_changed_at if server_cfg else None
 
-    if peer.last_config_hash is None:
-        sync_status = "red"
-        message = "Config never downloaded"
-    elif config_changed_at and peer.last_config_downloaded_at and config_changed_at > peer.last_config_downloaded_at:
-        sync_status = "yellow"
-        message = "Config outdated — server routes changed"
-    else:
-        sync_status = "green"
-        message = "Config is up to date"
+    from app.services.sync_service import sync_state
+    sync_status, message = sync_state(peer)
 
     wg_statuses = get_peer_statuses()
     wg = wg_statuses.get(peer.public_key)
@@ -364,4 +364,44 @@ def get_sync_status(
         "is_online": is_online,
         "last_config_downloaded_at": peer.last_config_downloaded_at.isoformat() if peer.last_config_downloaded_at else None,
         "last_config_changed_at": config_changed_at.isoformat() if config_changed_at else None,
+        "config_revision": peer.config_revision,
+        "applied_config_revision": peer.applied_config_revision,
+        "last_config_applied_at": peer.last_config_applied_at.isoformat() if peer.last_config_applied_at else None,
     }
+
+
+@router.post("/{peer_id}/config/ack")
+def acknowledge_manual_config(peer_id: int, body: ConfigAppliedRequest, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    """Explicit operator confirmation for routers without a managed sync client."""
+    from datetime import datetime, timezone
+    peer = peer_service.get_peer(db, peer_id)
+    if not peer or peer.is_system:
+        raise HTTPException(404, "Peer no encontrado")
+    if body.revision != peer.config_revision or body.revision <= 0:
+        raise HTTPException(409, "La configuración cambió; descargá y aplicá la revisión actual")
+    peer.applied_config_revision = body.revision
+    peer.last_config_applied_at = datetime.now(timezone.utc)
+    db.commit()
+    audit_log(db, "peer.config_applied_manual", user_id=user.id, target_type="peer", target_id=peer.id,
+              details={"revision": body.revision})
+    return {"applied_revision": body.revision}
+
+
+@router.get("/{peer_id}/config/update-mikrotik")
+def mikrotik_update(peer_id: int, interface: str, db: Session = Depends(get_db), _: User = Depends(require_password_changed)):
+    import re
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,32}", interface):
+        raise HTTPException(422, "Nombre de interfaz inválido")
+    peer = peer_service.get_peer(db, peer_id)
+    if not peer or peer.peer_type != "branch_office":
+        raise HTTPException(404, "Sucursal no encontrada")
+    cfg = _get_server_config(db)
+    routes = compile_client_allowed_ips(db, peer_id)
+    marker = f"netloom-{peer_id}"
+    lines = [f'/interface wireguard peers set [find interface={interface} public-key="{cfg.public_key}"] allowed-address={",".join(routes)}',
+             f'/ip route remove [find comment="{marker}"]']
+    lines.extend(f'/ip route add dst-address={cidr} gateway={interface} comment="{marker}"' for cidr in routes)
+    from datetime import datetime, timezone
+    peer.last_config_downloaded_at = datetime.now(timezone.utc)
+    db.commit()
+    return Response("\n".join(lines) + "\n", media_type="text/plain")

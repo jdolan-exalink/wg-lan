@@ -29,6 +29,7 @@ def create_policy(db: Session, data: PolicyCreate) -> Policy:
     
     if existing:
         existing.action = data.action
+        existing.enabled = data.enabled
         db.commit()
         db.refresh(existing)
         return existing
@@ -40,6 +41,7 @@ def create_policy(db: Session, data: PolicyCreate) -> Policy:
         dest_ip_group_id=data.dest_ip_group_id,
         direction=data.direction,
         action=data.action,
+        enabled=data.enabled,
         position=max_pos + 1,
     )
     db.add(policy)

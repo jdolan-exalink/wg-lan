@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+import asyncio
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -14,7 +16,24 @@ from app.routers import audit, auth, connection_logs, dashboard, groups, network
 from app.routers.devices import router as devices_router
 from app.routers.client import router as client_router
 from app.routers.ip_groups import router as ip_groups_router
+from app.routers.routes import router as routes_router
 from app.services.auth_service import create_admin_user, create_server_config
+
+
+async def watch_routes():
+    from app.services.route_service import reconcile_routes
+    from app.services.connection_log_service import log_connection
+    def check():
+        with SessionLocal() as db:
+            try:
+                result = reconcile_routes(db)
+                if result["changes"]:
+                    log_connection(db, "routes_reconciled", "Rutas reparadas automáticamente", details={"changes": result["changes"]})
+            except Exception:
+                logging.getLogger(__name__).exception("Automatic route reconciliation failed")
+    while True:
+        await asyncio.sleep(max(15, settings.config_sync_interval))
+        await asyncio.to_thread(check)
 
 
 @asynccontextmanager
@@ -27,7 +46,15 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    yield
+    watcher = asyncio.create_task(watch_routes())
+    try:
+        yield
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -39,6 +66,13 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+from app.services.wg_service import ApplyError
+
+
+@app.exception_handler(ApplyError)
+async def apply_error_handler(request: Request, exc: ApplyError):
+    return JSONResponse(status_code=503, content={"detail": str(exc), "saved": True, "applied": False})
 
 # Middleware (order matters: outermost first)
 app.add_middleware(
@@ -57,6 +91,7 @@ app.include_router(onboarding.router)
 app.include_router(dashboard.router)
 app.include_router(peers.router)
 app.include_router(networks.router)
+app.include_router(routes_router)
 app.include_router(groups.router)
 app.include_router(policies.router)
 app.include_router(ip_groups_router)

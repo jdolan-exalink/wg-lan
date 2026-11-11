@@ -1,3 +1,5 @@
+import { isAxiosError } from "axios";
+import { Link } from "react-router-dom";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { networksApi, peersApi } from "@/api/networks";
@@ -36,8 +38,19 @@ const schema = z.object({
   network_type: z.enum(["lan", "vpn"]).default("lan"),
   is_default: z.boolean().default(false),
   nat_enabled: z.boolean().default(true),
+  peer_id: z.number().nullable().optional(),
+  gateway_ip: z.string().optional(),
 });
 type FormData = z.infer<typeof schema>;
+
+function errorText(error: unknown) {
+  if (!error) return "";
+  if (isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+    return typeof detail === "string" ? detail : error.message;
+  }
+  return String(error);
+}
 
 const peerTypeIcons: Record<string, React.ReactNode> = {
   roadwarrior: <Laptop className="h-3 w-3" />,
@@ -139,6 +152,7 @@ function AddPeerToNetwork({ networkId, allPeers, assignedPeerIds }: { networkId:
 
 function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] }) {
   const [expanded, setExpanded] = useState(false);
+  const [gatewayIp, setGatewayIp] = useState(network.gateway_ip ?? "");
   const qc = useQueryClient();
 
   const del = useMutation({
@@ -154,8 +168,13 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
 
   const setGateway = useMutation({
     mutationFn: ({ id, peer_id }: { id: number; peer_id: number | null }) =>
-      networksApi.update(id, { peer_id }),
+      networksApi.update(id, { peer_id, gateway_ip: null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
+  });
+
+  const setNextHop = useMutation({
+    mutationFn: () => networksApi.update(network.id, { peer_id: null, gateway_ip: gatewayIp || null }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["networks"] }); qc.invalidateQueries({ queryKey: ["routes"] }); },
   });
 
   const removePeer = useMutation({
@@ -204,7 +223,7 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
           </div>
         </td>
         <td className="px-4 py-3">
-          <GatewayBadge peerId={network.peer_id} allPeers={allPeers} />
+          {network.gateway_ip ? <span className="font-mono text-xs">{network.gateway_ip}</span> : <GatewayBadge peerId={network.peer_id} allPeers={allPeers} />}
         </td>
         <td className="px-4 py-3">
           {network.peer_count > 0 ? (
@@ -222,6 +241,7 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
           </div>
         </td>
       </tr>
+      {(del.error || toggleNat.error || setGateway.error || setNextHop.error || removePeer.error) && <tr><td colSpan={7} role="alert" className="px-4 py-2 text-destructive text-sm">{errorText(del.error || toggleNat.error || setGateway.error || setNextHop.error || removePeer.error)}</td></tr>}
       {expanded && (
         <tr className="bg-muted/10">
           <td colSpan={7} className="px-4 py-3">
@@ -242,7 +262,7 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
                     <SelectItem value="__none__">
                       <span className="text-muted-foreground">Sin gateway</span>
                     </SelectItem>
-                    {allPeers.map((p) => (
+                    {allPeers.filter(p => p.peer_type === "branch_office" || p.is_system).map((p) => (
                       <SelectItem key={p.id} value={p.id.toString()}>
                         <div className="flex items-center gap-2">
                           {peerTypeIcons[p.device_type ?? p.peer_type]}
@@ -257,6 +277,12 @@ function NetworkRow({ network, allPeers }: { network: Network; allPeers: Peer[] 
                 <span className="text-muted-foreground">Red:</span>
                 <span className="font-mono text-primary">{network.subnet}</span>
               </div>
+              <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); setNextHop.mutate(); }}>
+                <Label htmlFor={`gateway-${network.id}`}>O gateway por IP:</Label>
+                <Input id={`gateway-${network.id}`} className="w-44 h-8" placeholder="192.168.70.1" value={gatewayIp} onChange={e => setGatewayIp(e.target.value)} />
+                <Button size="sm" variant="outline" disabled={setNextHop.isPending}>Guardar gateway IP</Button>
+                <span className="text-xs text-muted-foreground">Debe ser un router directamente conectado al servidor.</span>
+              </form>
               <div className="border-t border-muted-foreground/10 pt-2">
                 <p className="text-xs text-muted-foreground font-medium mb-2">Peers con acceso:</p>
                 {network.peers.length === 0 ? (
@@ -311,7 +337,7 @@ export function NetworksPage() {
   });
 
   const create = useMutation({
-    mutationFn: (data: FormData) => networksApi.create(data),
+    mutationFn: (data: FormData) => networksApi.create({ ...data, gateway_ip: data.gateway_ip || null }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["networks"] }); setShowForm(false); },
   });
 
@@ -321,8 +347,7 @@ export function NetworksPage() {
   });
 
   const onSubmit = async (data: FormData) => {
-    await create.mutateAsync(data);
-    reset();
+    try { await create.mutateAsync(data); reset(); } catch { /* Error displayed above the form. */ }
   };
 
   const bovpnPeers = allPeers.filter((p: Peer) => p.peer_type === "branch_office");
@@ -365,6 +390,8 @@ export function NetworksPage() {
         </CardContent>
       </Card>
 
+      <p className="text-sm text-muted-foreground"><Link to="/routes" className="text-primary underline">Ver rutas existentes y pendientes</Link></p>
+      {applyChanges.error && <p role="alert" className="text-destructive">{errorText(applyChanges.error)}</p>}
       {/* BOVPN Peers Summary */}
       {bovpnPeers.length > 0 && (
         <Card>
@@ -474,6 +501,16 @@ export function NetworksPage() {
                       <p className="text-xs text-muted-foreground">Desactivar si los clientes VPN deben llegar con su IP real (ej: telefonía IP, rutas estáticas de ambos lados)</p>
                     </div>
                   </div>
+                  <div className="space-y-1">
+                    <Label>Gateway de sucursal</Label>
+                    <Select value={watch("peer_id")?.toString() ?? "none"} onValueChange={v => { setValue("peer_id", v === "none" ? null : Number(v)); if (v !== "none") setValue("gateway_ip", ""); }}>
+                      <SelectTrigger><SelectValue placeholder="Red conectada / gateway IP" /></SelectTrigger>
+                      <SelectContent><SelectItem value="none">Red conectada / gateway IP</SelectItem>{allPeers.filter(p => p.peer_type === "branch_office" || p.is_system).map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1"><Label>O IP de siguiente salto</Label><Input placeholder="192.168.70.1" disabled={watch("peer_id") != null} {...register("gateway_ip")} /></div>
+                  <p className="col-span-2 text-xs text-muted-foreground">Al guardar una red con gateway se instala su ruta automáticamente. Si es una red conectada al servidor, se utiliza la ruta de la interfaz. Sin gateway ni conexión directa quedará pendiente.</p>
+                  {create.error && <p className="col-span-2 text-sm text-destructive" role="alert">{errorText(create.error)}</p>}
                   <div className="col-span-2 flex gap-2">
                     <Button type="submit" size="sm" disabled={isSubmitting}>Guardar</Button>
                     <Button type="button" variant="outline" size="sm" onClick={() => setShowForm(false)}>Cancelar</Button>

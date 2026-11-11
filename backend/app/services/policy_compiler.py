@@ -5,7 +5,7 @@ Compiles groups/policies into a concrete list of allowed CIDRs for a given peer.
 
 ## New Model: Group-to-Group Policies
 
-- **Peers without groups** → can reach ALL networks (allow-all default)
+- **Peers without groups or explicit grants** → no access when firewall is enabled
 - **Peers with groups** → can only reach what their group policies allow
 - **Policies** define access between groups with direction control:
   - `outbound`: source group can reach dest group's networks
@@ -22,7 +22,7 @@ Precedence (deny-first):
   6. allow_group       (group_network_access action='allow') — group-level allow
   7. allow_manual      (peer_overrides action='allow', peer_network_access) — peer-level allow
   8. allow_policy      (policies action='allow') — policy-level allow (group or ip-group)
-  9. allow_all         (default: if peer has NO groups/assignments/overrides, allow everything)
+  9. default deny     (no assignments means no access when firewall is enabled)
 """
 
 import json
@@ -36,6 +36,7 @@ from app.models.network import Network
 from app.models.server_config import ServerConfig
 from app.models.user import UserNetworkAccess
 from app.models.ip_group import IpGroup, IpGroupEntry
+from app.models.user_group import UserGroup
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,10 @@ def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = Fals
         PeerGroupMember.peer_id == peer_id
     ).all()
     group_ids = [m.group_id for m in memberships]
+    peer = db.query(Peer).filter(Peer.id == peer_id).first()
+    if peer and peer.user_id:
+        group_ids = sorted(set(group_ids) | {row[0] for row in db.query(UserGroup.group_id).filter(
+            UserGroup.user_id == peer.user_id).all()})
 
     # Step 2: Collect peer-level overrides (always win)
     overrides = db.query(PeerOverride).filter(PeerOverride.peer_id == peer_id).all()
@@ -121,10 +126,8 @@ def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = Fals
         and not group_allow_networks
         and not group_deny_networks
     ):
-        all_networks = db.query(Network).all()
-        cidrs = sorted({n.subnet for n in all_networks})
-        logger.info(f"Peer {peer_id}: ALLOW-ALL mode, CIDRs: {cidrs}")
-        return cidrs
+        logger.info(f"Peer {peer_id}: no access assignments — deny by default")
+        return []
 
     # Step 4: Collect group-level policies
     allowed_network_ids: set[int] = set(direct_allow_networks)
@@ -223,11 +226,22 @@ def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = Fals
         networks = db.query(Network).filter(Network.id.in_(final_network_ids)).all()
         final_cidrs.update(n.subnet for n in networks)
 
-    # Apply IP-level denies: remove any /32 that is blocked
-    # Apply IP-level allows: add /32 CIDRs that are not blocked
+    # Apply denies by address range, including /32 exceptions inside broader allows.
+    denied_network_ids = override_deny_networks | user_deny_networks | group_deny_networks | blocked_network_ids
+    denied_ranges = [ipaddress.ip_network(n.subnet) for n in db.query(Network).filter(Network.id.in_(denied_network_ids)).all()]
     for ip in allowed_ips:
-        if ip not in blocked_ips:
+        if ip not in blocked_ips and not any(ipaddress.ip_network(ip).subnet_of(net) for net in denied_ranges):
             final_cidrs.add(ip)
+    for blocked in blocked_ips:
+        block = ipaddress.ip_network(blocked)
+        remaining = set()
+        for cidr in final_cidrs:
+            net = ipaddress.ip_network(cidr)
+            if not net.overlaps(block):
+                remaining.add(cidr)
+            elif block.subnet_of(net):
+                remaining.update(str(part) for part in net.address_exclude(block))
+        final_cidrs = remaining
 
     if not final_network_ids and not allowed_ips:
         peer = db.query(Peer).filter(Peer.id == peer_id).first()
@@ -252,7 +266,7 @@ def compile_allowed_cidrs(db: Session, peer_id: int, force_policies: bool = Fals
 
 
 def _get_group_networks(db: Session, group_id: int) -> set[int]:
-    """Get all network IDs associated with a group's members, plus networks with no owner."""
+    """Get networks owned by the group's members. Unowned LANs need explicit grants."""
     member_peer_ids = db.query(PeerGroupMember.peer_id).filter(
         PeerGroupMember.group_id == group_id
     ).all()
@@ -265,11 +279,6 @@ def _get_group_networks(db: Session, group_id: int) -> set[int]:
             Network.peer_id.in_(member_peer_ids)
         ).all()
         network_ids.update(row[0] for row in owned)
-    
-    orphaned = db.query(Network.id).filter(
-        Network.peer_id.is_(None)
-    ).all()
-    network_ids.update(row[0] for row in orphaned)
     
     return network_ids
 
@@ -313,8 +322,8 @@ def compile_client_allowed_ips(db: Session, peer_id: int) -> list[str]:
     """
     Compile AllowedIPs for a client config.
     If tunnel_mode is 'full', returns all networks (0.0.0.0/0, ::/0).
-    If tunnel_mode is 'split', returns only VPN subnet and allowed networks via policies.
-    Always respects tunnel_mode regardless of firewall state.
+    Split tunnels receive transport routes; authorization is enforced by the hub.
+    Never route a branch's own LAN back into its tunnel.
     """
     from app.models.peer import Peer
     
@@ -326,13 +335,15 @@ def compile_client_allowed_ips(db: Session, peer_id: int) -> list[str]:
     if peer.tunnel_mode == "full":
         return ["0.0.0.0/0", "::/0"]
     
-    # Split tunnel: always use policy-based allowed networks
-    # Do NOT use the firewall-disabled shortcut - always respect policies
-    allowed_cidrs = compile_allowed_cidrs(db, peer_id, force_policies=True)
+    owned = {n.subnet for n in db.query(Network).filter(Network.peer_id == peer_id).all()}
+    if peer.remote_subnets:
+        owned.update(json.loads(peer.remote_subnets))
+    allowed_cidrs = sorted({n.subnet for n in db.query(Network).all()} - owned)
     
     # Always include VPN subnet
     from app.config import settings
-    vpn_subnet = settings.subnet
+    cfg = db.query(ServerConfig).first()
+    vpn_subnet = str(ipaddress.ip_network(cfg.address, strict=False)) if cfg else settings.subnet
     if vpn_subnet not in allowed_cidrs:
         allowed_cidrs.append(vpn_subnet)
     

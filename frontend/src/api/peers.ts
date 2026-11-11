@@ -41,6 +41,10 @@ export const peersApi = {
   getPermissions: (id: number) =>
     client.get<PermissionSummary>(`/peers/${id}/permissions`),
 
+  acknowledgeConfig: (id: number, revision: number) => client.post(`/peers/${id}/config/ack`, { revision }),
+
+  updateMikrotik: (id: number, iface: string) => client.get<string>(`/peers/${id}/config/update-mikrotik`, { params: { interface: iface } }),
+
   getSyncStatus: (id: number) =>
     client.get<PeerSyncStatus>(`/peers/${id}/sync-status`),
 

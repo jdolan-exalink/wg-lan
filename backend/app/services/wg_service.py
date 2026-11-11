@@ -9,6 +9,8 @@ import json
 import subprocess
 import time
 import logging
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +21,7 @@ from app.config import settings
 from app.models.peer import Peer
 from app.services.config_service import build_server_allowed_ips, generate_full_server_config
 from app.services import connection_log_service, iptables_service
+from app.services.route_service import route_lock, reconcile_routes
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +48,20 @@ def _run(cmd: list[str], input_data: str | None = None) -> subprocess.CompletedP
     )
 
 
+class ApplyError(RuntimeError):
+    """Desired configuration is saved, but live application failed."""
+
+
 def apply_config(db: Session) -> None:
+    with route_lock:
+        try:
+            _apply_config(db)
+        except Exception as exc:
+            logger.exception("Failed to apply saved configuration")
+            raise ApplyError(f"Configuración guardada; aplicación pendiente: {exc}") from exc
+
+
+def _apply_config(db: Session) -> None:
     """
     Regenerate wg0.conf from DB state and apply via wg syncconf.
     Does not drop existing connections.
@@ -63,8 +79,8 @@ def apply_config(db: Session) -> None:
     if not server_cfg:
         return
 
-    server_cfg.last_config_changed_at = datetime.now(timezone.utc)
-    db.commit()
+    from app.services.sync_service import refresh_revisions
+    refresh_revisions(db)
 
     peers = db.query(Peer).filter(
         Peer.is_enabled == True,
@@ -75,7 +91,10 @@ def apply_config(db: Session) -> None:
     config_str = generate_full_server_config(server_cfg, peer_pairs)
     config_path = Path(settings.wg_config_file)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(config_str)
+    with tempfile.NamedTemporaryFile(mode="w", dir=config_path.parent, delete=False) as temp:
+        temp.write(config_str)
+        temp_path = temp.name
+    os.replace(temp_path, config_path)
 
     # Build stripped config for wg syncconf — only native wg directives allowed
     # wg-quick directives: Address, DNS, MTU, PostUp, PostDown
@@ -135,6 +154,8 @@ def apply_config(db: Session) -> None:
         )
         raise RuntimeError(f"wg syncconf failed: {result.stderr.strip()}")
     
+    reconcile_routes(db)
+    iptables_service.apply_iptables_rules(db)
     connection_log_service.log_connection(
         db=db,
         event_type="config_applied",
@@ -144,12 +165,6 @@ def apply_config(db: Session) -> None:
         duration_ms=duration_ms,
     )
     
-    # Apply dynamic iptables rules (SNAT for branch offices, forwarding, isolation)
-    try:
-        iptables_service.apply_iptables_rules(db)
-    except Exception as e:
-        logger.warning(f"Failed to apply iptables rules: {e}")
-
 
 def ensure_interface_up(db: Session) -> None:
     """Ensure WireGuard interface is up. Creates it if needed, applies config."""

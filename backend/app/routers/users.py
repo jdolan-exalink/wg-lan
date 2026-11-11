@@ -392,6 +392,8 @@ def assign_user_groups(
     
     # Remove existing assignments
     db.query(UserGroup).filter(UserGroup.user_id == user_id).delete()
+    from app.services.sync_service import clear_default_user_peer_groups
+    clear_default_user_peer_groups(db, user_id)
     
     # Add new assignments
     for group_id in body.group_ids:
@@ -399,6 +401,7 @@ def assign_user_groups(
         db.add(user_group)
     
     db.commit()
+    _apply_user_network_changes(db, user_id)
     
     audit_log(
         db,
@@ -437,7 +440,10 @@ def remove_user_group(
         UserGroup.user_id == user_id,
         UserGroup.group_id == group_id,
     ).delete()
+    from app.services.sync_service import clear_default_user_peer_groups
+    clear_default_user_peer_groups(db, user_id)
     db.commit()
+    _apply_user_network_changes(db, user_id)
     
     audit_log(
         db,
@@ -452,13 +458,11 @@ def remove_user_group(
 
 # ── User-Network Assignment ─────────────────────────────────────
 
-def _apply_user_network_changes(db: Session) -> None:
-    """Re-apply iptables rules after user network assignment changes."""
-    try:
-        iptables_service.apply_iptables_rules(db)
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"iptables re-apply after user network change: {e}")
+def _apply_user_network_changes(db: Session, user_id: int) -> None:
+    from app.services.sync_service import apply_permission_changes, clear_default_user_peer_groups
+    clear_default_user_peer_groups(db, user_id)
+    db.commit()
+    apply_permission_changes(db)
 
 
 @router.get("/{user_id}/networks", response_model=list[UserNetworkAssignment])
@@ -525,7 +529,7 @@ def assign_network_to_user(
     db.commit()
     db.refresh(assignment)
     
-    _apply_user_network_changes(db)
+    _apply_user_network_changes(db, user_id)
     
     audit_log(
         db,
@@ -565,7 +569,7 @@ def remove_network_from_user(
     
     db.delete(assignment)
     db.commit()
-    _apply_user_network_changes(db)
+    _apply_user_network_changes(db, user_id)
     
     audit_log(
         db,

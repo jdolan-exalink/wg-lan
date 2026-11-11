@@ -1,229 +1,46 @@
-# NetLoom — Modelo de Permisos y Ruteo
+# Permisos y rutas de NetLoom
 
-## Visión General
+## Transporte y autorización
 
-NetLoom usa un modelo de **permisos declarativos** basado en **Zonas**, **Grupos** y **Políticas** que se compilan automáticamente en las rutas de WireGuard (`AllowedIPs`).
+Las rutas indican por dónde viaja un paquete. Los permisos determinan si el hub lo puede reenviar. No deben confundirse: un cliente puede tener una ruta hacia una red y tener el acceso denegado por el firewall del servidor.
 
-### Filosofía: Allow-All por Defecto
+En split tunnel se distribuyen las redes registradas y el segmento de túneles, excluyendo las LAN propias de la sucursal. Una nueva red requiere actualizar la configuración de los clientes existentes; los cambios de permisos sobre rutas ya distribuidas se aplican en el servidor.
 
-- **Peers sin grupos** → acceso total a todas las zonas y redes
-- **Peers con grupos** → solo acceden a lo que sus políticas permiten
-- **Para restringir**: sacar del grupo "All", meter en grupos específicos
+## Firewall
 
----
+Con el firewall desactivado, el tráfico WireGuard está permitido. Las políticas guardadas pueden consultarse en la vista previa de Policies, pero no restringen el tráfico hasta activar el firewall. Revisar esa matriz antes de activarlo en una instalación existente.
 
-## Conceptos Clave
+Con el firewall activo se evalúan todos los peers habilitados, incluso aquellos que no tienen grupos. Sin grupos ni asignaciones explícitas se deniega el acceso. Las redes sin propietario requieren permisos explícitos y no se agregan automáticamente a todos los grupos.
 
-### 1. Zonas (Zones)
+Se combinan los grupos directos del peer y los asignados al usuario. Al gestionar explícitamente los grupos de un usuario se elimina la membresía All automática histórica de sus roadwarriors; los otros grupos directos del peer se conservan. Puede asignarse All al usuario de forma explícita si ése es el acceso deseado.
 
-Una **Zona** es un conjunto de redes de destino accesibles por VPN.
+## Precedencia
 
-```
-Ejemplo:
-  Zona "LAN Server" → 192.168.1.0/24
-  Zona "Ventas"     → 10.10.20.0/24
-  Zona "Planta"     → 10.10.10.0/24
-```
+Toda denegación explícita tiene prioridad sobre una concesión:
 
-Cada zona puede tener múltiples redes (CIDRs).
+1. Denegación individual del peer (override).
+2. Denegación por usuario.
+3. Denegación por asignación de red al grupo.
+4. Denegación por política de grupo o IP.
+5. Concesiones por usuario, grupo, peer o política, para destinos no denegados.
+6. Sin concesiones: sin acceso.
 
-### 2. Grupos (Groups)
+Una denegación de IP se resta del rango permitido, aunque exista una concesión para toda la LAN. Una concesión de IP no elude una denegación para la red que la contiene. Las posiciones de las políticas son de presentación; no cambian la prioridad de las denegaciones.
 
-Un **Grupo** es un perfil de acceso. Los peers se asignan a grupos.
+Las políticas salientes permiten a miembros del grupo origen acceder a las redes de los miembros del grupo destino. Las entrantes invierten esa relación, y ambas direcciones combinan los dos sentidos. Las asignaciones directas de red por usuario, grupo o peer no requieren crear una política entre grupos.
 
-```
-Ejemplo:
-  Grupo "All"       → Acceso total (default para todos)
-  Grupo "soporte"   → Acceso a Planta + Ventas
-  Grupo "gerencia"  → Acceso a todo
-```
+## Aplicación y observabilidad
 
-### 3. Políticas (Policies)
+Los cambios de grupo, usuario, asignaciones directas y overrides reaplican las reglas mediante el mismo servicio. Si falla la aplicación, la API informa que la configuración quedó guardada y pendiente; no devuelve un éxito de aplicación ficticio.
 
-Una **Política** conecta un Grupo con una Zona: `Grupo → Zona = allow/deny`
+NetLoom administra NETLOOM-FWD y NETLOOM-POST. Valida las reglas antes de reemplazarlas, conserva las cadenas de otros servicios y revoca únicamente conexiones de los rangos origen/destino que perdieron acceso. Los commits de filter y NAT son independientes.
 
-```
-Ejemplo:
-  soporte → Planta  = allow
-  soporte → Ventas  = allow
-  soporte → Gerencia = deny
-```
+La pantalla Rutas compara redes y gateways con Linux. Las rutas propias usan protocolo 242 y se reconcilian al aplicar configuración y periódicamente. Al agregar una LAN detrás de una sucursal también se actualizan los AllowedIPs del peer en el hub. Una red sin gateway ni conexión directa queda pendiente.
 
-### 4. Peer Overrides (Excepciones por Peer)
+## Confirmación del cliente
 
-Permiten dar o quitar acceso a un peer específico, sin importar sus grupos.
+Cada peer tiene una revisión deseada. Descargar una configuración no significa haberla aplicado y un handshake sólo prueba que hay un túnel.
 
-```
-Ejemplo:
-  Juan → Zona Gerencia = allow (override manual)
-```
+Un cliente compatible informa applied_revision en su reporte de estado después de aplicar AllowedIPs y rutas del sistema. Los routers manuales pueden confirmarse desde el diálogo de configuración del peer después de aplicar la revisión. Verde significa revisión actual confirmada; amarillo significa descarga realizada y aplicación pendiente o desactualizada; rojo significa que falta descargar/aplicar. Un heartbeat actualiza last_seen_at y no modifica la fecha de descarga.
 
----
-
-## Precedencia (Deny-First)
-
-Cuando se compilan los `AllowedIPs` para un peer, el orden de prioridad es:
-
-| Prioridad | Tipo | Descripción |
-|-----------|------|-------------|
-| 1 | `deny_manual` | Override manual del peer = deny (siempre gana) |
-| 2 | `allow_manual` | Override manual del peer = allow |
-| 3 | `deny_group` | Política deny del grupo |
-| 4 | `allow_group` | Política allow del grupo |
-| 5 | `allow_all` | **Default**: si el peer NO tiene grupos, accede a TODO |
-
----
-
-## Flujo de Onboarding
-
-Al primer login, después de cambiar la contraseña, se ejecuta el wizard:
-
-### Paso 1: Bienvenida
-Explica el modelo de permisos y los 3 pasos del setup.
-
-### Paso 2: Configurar LAN del Servidor
-Se ingresa el CIDR de la red local del servidor (ej: `192.168.1.0/24`).
-
-### Paso 3: Creación Automática
-El sistema crea:
-
-1. **Zona "LAN Server"** con el CIDR ingresado
-2. **Grupo "All"** con descripción explicativa
-3. **Política**: All → LAN Server = `allow`
-4. Marca `onboarding_completed = True` en el usuario
-
-### Resultado
-Todos los peers nuevos tienen acceso completo a la LAN del servidor por defecto.
-
----
-
-## Cómo Restringir Acceso
-
-### Escenario: Juan solo debe acceder a Planta
-
-1. Ir a **Peers** → clic en el ícono Shield (🛡️) de Juan
-2. **Desmarcar** el grupo "All"
-3. **Marcar** el grupo "soporte" (que tiene política allow → Planta)
-4. Guardar
-5. **Re-descargar** el `.conf` de Juan (los AllowedIPs se actualizan)
-
-### Escenario: Agregar una nueva red restringida
-
-1. Ir a **Zones** → crear zona "RRHH" → agregar red `10.10.30.0/24`
-2. Ir a **Groups** → crear grupo "rrhh"
-3. Ir a **Policies** → crear política rrhh → RRHH = `allow`
-4. Asignar peers al grupo "rrhh"
-
----
-
-## Ruteo entre Peers (NetMaker-Style)
-
-### RoadWarrior → Branch Office LAN
-
-Cuando un branch office tiene `remote_subnets` configurados (ej: `192.168.67.0/24`), esos CIDRs se incluyen automáticamente en los `AllowedIPs` de los peers que tienen acceso.
-
-```
-Branch "Salamines":
-  VPN IP: 100.169.0.3/32
-  Remote Subnets: 192.168.67.0/24
-
-Juan (roadwarrior) AllowedIPs:
-  100.169.0.3/32,        # IP VPN de Salamines
-  192.168.1.0/24,        # LAN Server
-  192.168.67.0/24        # LAN de Salamines
-```
-
-### Server → Peer LAN
-
-El servidor siempre conoce las rutas de todos los peers porque su `wg0.conf` incluye los `AllowedIPs` de cada peer:
-
-```
-[Peer]
-# Salamines
-PublicKey = ...
-AllowedIPs = 100.169.0.3/32, 192.168.67.0/24
-```
-
----
-
-## Arquitectura de Compilación
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Policy Compiler                       │
-│                                                          │
-│  compile_client_allowed_ips(peer_id)                     │
-│  ├── compile_allowed_cidrs(peer_id)  → zonas permitidas  │
-│  └── compile_peer_routes(peer_id)    → rutas a branches  │
-│                                                          │
-│  Resultado: lista de CIDRs para AllowedIPs del cliente   │
-└─────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────────────┐
-│              Client Config (.conf)                       │
-│                                                          │
-│  [Interface]                                             │
-│  PrivateKey = ...                                        │
-│  Address = 100.169.0.2/32                                │
-│                                                          │
-│  [Peer]                                                  │
-│  PublicKey = <server>                                    │
-│  Endpoint = vpn.example.com:51820                        │
-│  AllowedIPs = 192.168.1.0/24, 192.168.67.0/24           │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-## Troubleshooting
-
-### Peer no puede hacer ping a una red
-
-1. Verificar que la red esté en una **Zona**
-2. Verificar que el peer esté en un **Grupo** con política `allow` a esa zona
-3. **Re-descargar** el `.conf` del peer (los AllowedIPs cambian)
-4. Re-importar la config en el cliente WireGuard
-
-### Peer tiene `0.0.0.0/32` en AllowedIPs
-
-Significa que no tiene zonas asignadas. Soluciones:
-- Si no se completó el onboarding: completar el wizard
-- Si ya se completó: asignar el peer a un grupo con políticas
-
-### Cambios en grupos/políticas no se reflejan
-
-Los `AllowedIPs` se calculan al momento de generar el `.conf`. Después de cambiar grupos o políticas:
-1. Ir a **Peers**
-2. Descargar nuevamente el `.conf` del peer
-3. Re-importar en el cliente WireGuard
-
----
-
-## Endpoints de Onboarding
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `POST` | `/api/onboarding/complete` | Completa el wizard (crea zona, grupo, política) |
-| `GET` | `/api/onboarding/status` | Verifica si el onboarding fue completado |
-
-### Request Body (POST /api/onboarding/complete)
-
-```json
-{
-  "server_lan_cidr": "192.168.1.0/24",
-  "server_lan_name": "LAN Server"
-}
-```
-
-### Response
-
-```json
-{
-  "success": true,
-  "message": "Onboarding completed. All peers will have full access by default.",
-  "zone_id": 1,
-  "group_id": 1,
-  "policy_id": 1
-}
-```
+Los clientes anteriores deben implementar la confirmación. Mientras tanto aparecerán pendientes y pueden actualizarse manualmente. No se envían claves privadas en el historial de deltas.

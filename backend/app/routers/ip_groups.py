@@ -12,12 +12,8 @@ router = APIRouter(prefix="/api/ip-groups", tags=["ip-groups"])
 
 
 def _apply_instant(db: Session) -> None:
-    from app.services import iptables_service
-    try:
-        iptables_service.apply_iptables_rules(db)
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"iptables re-apply after ip-group change: {e}")
+    from app.services.sync_service import apply_permission_changes
+    apply_permission_changes(db)
 
 
 @router.get("", response_model=list[IpGroupResponse])

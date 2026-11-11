@@ -4,7 +4,7 @@ import type { Peer } from "@/types/peer";
 
 export const networksApi = {
   list: () => client.get<Network[]>("/networks"),
-  create: (data: { name: string; subnet: string; description?: string; network_type?: string; is_default?: boolean; nat_enabled?: boolean; peer_id?: number | null }) =>
+  create: (data: { name: string; subnet: string; description?: string; network_type?: string; is_default?: boolean; nat_enabled?: boolean; peer_id?: number | null; gateway_ip?: string | null }) =>
     client.post<Network>("/networks", data),
   update: (id: number, data: Partial<Network>) => client.patch<Network>(`/networks/${id}`, data),
   delete: (id: number) => client.delete(`/networks/${id}`),
@@ -50,6 +50,7 @@ export const groupsApi = {
 };
 
 export const policiesApi = {
+  preview: () => client.get<Array<{peer_id: number; name: string; source: string; allowed_cidrs: string[]}>>("/policies/preview"),
   list: (source_group_id?: number, dest_group_id?: number) =>
     client.get<Policy[]>("/policies", { params: { source_group_id, dest_group_id } }),
   matrix: () => client.get<PolicyMatrix>("/policies/matrix"),

@@ -108,11 +108,7 @@ def update_server_config(
     db.commit()
     db.refresh(cfg)
 
-    # Try to apply config to WireGuard (may fail if WG not available)
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
 
     return cfg
 
@@ -133,11 +129,7 @@ def regenerate_keypair(
     db.commit()
     db.refresh(cfg)
 
-    # Try to apply config to WireGuard
-    try:
-        wg_service.apply_config(db)
-    except Exception:
-        pass
+    wg_service.apply_config(db)
 
     return RegenerateKeyResponse(
         public_key=public_key,
@@ -277,11 +269,8 @@ def set_firewall_status(
     cfg.firewall_enabled = body.firewall_enabled
     db.commit()
     db.refresh(cfg)
-    try:
-        from app.services import iptables_service
-        iptables_service.apply_iptables_rules(db)
-    except Exception:
-        pass
+    from app.services.sync_service import apply_permission_changes
+    apply_permission_changes(db)
     return FirewallStatusResponse(firewall_enabled=cfg.firewall_enabled)
 
 

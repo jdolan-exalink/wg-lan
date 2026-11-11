@@ -28,7 +28,7 @@ def map_ad_groups_to_netloom(db: Session, ad_groups: list[dict]) -> list[PeerGro
         
         if mapping:
             group = db.query(PeerGroup).filter(PeerGroup.id == mapping.netloom_group_id).first()
-            if group and group.is_active:
+            if group:
                 mapped_groups.append(group)
         else:
             mapping_by_name = (
@@ -42,7 +42,7 @@ def map_ad_groups_to_netloom(db: Session, ad_groups: list[dict]) -> list[PeerGro
             
             if mapping_by_name:
                 group = db.query(PeerGroup).filter(PeerGroup.id == mapping_by_name.netloom_group_id).first()
-                if group and group.is_active:
+                if group:
                     mapped_groups.append(group)
     
     return mapped_groups

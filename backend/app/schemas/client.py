@@ -79,6 +79,7 @@ class ConfigVersionResponse(BaseModel):
 
 class ClientStatusRequest(BaseModel):
     peer_id: int
+    applied_revision: int | None = Field(None, ge=0)
     tunnel_status: str = Field(..., pattern="^(connected|disconnected|connecting)$")
     last_handshake: Optional[datetime] = None
     bytes_sent: Optional[int] = None

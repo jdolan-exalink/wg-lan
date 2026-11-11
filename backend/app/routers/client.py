@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security, status
@@ -169,7 +170,7 @@ def _get_or_create_peer(
         tunnel_mode="split",
         persistent_keepalive=25,
     )
-    peer = create_roadwarrior(db, peer_data, created_by=user.id)
+    peer = create_roadwarrior(db, peer_data, created_by=user.id, owner_user_id=user.id)
 
     # Link peer to user and set OS
     peer.user_id = user.id
@@ -262,7 +263,15 @@ def client_login(
                     )
                 user.last_login_at = datetime.now(timezone.utc)
                 user.auth_source = "ad"
+                from app.models.user_group import UserGroup
+                from app.services.sync_service import clear_default_user_peer_groups
+                clear_default_user_peer_groups(db, user.id)
+                db.query(UserGroup).filter(UserGroup.user_id == user.id).delete()
+                for group_id in {group.id for group in netloom_groups}:
+                    db.add(UserGroup(user_id=user.id, group_id=group_id))
                 db.commit()
+                from app.services.sync_service import apply_permission_changes
+                apply_permission_changes(db)
         except ad_service.ADAuthenticationError:
             if auth_method == "ad":
                 raise HTTPException(
@@ -285,7 +294,7 @@ def client_login(
             detail="Invalid credentials",
         )
 
-    # Block login if user already has an active connection (check by last_config_downloaded_at)
+    # Active presence is tracked independently from downloads and application ACKs.
     existing_peer = (
         db.query(Peer)
         .filter(
@@ -295,8 +304,8 @@ def client_login(
         )
         .first()
     )
-    if existing_peer and existing_peer.last_config_downloaded_at:
-        last_seen = existing_peer.last_config_downloaded_at
+    if existing_peer and existing_peer.last_seen_at:
+        last_seen = existing_peer.last_seen_at
         if last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - last_seen).total_seconds()
@@ -368,24 +377,17 @@ def get_full_config(
     # Get or auto-provision the peer for this user
     peer = _get_or_create_peer(db, user, request)
 
-    # Update last_config_downloaded_at (used for active connection check)
+    from app.services.sync_service import refresh_revisions
+    refresh_revisions(db)
+
+    # Download timestamps never serve as application acknowledgement.
     peer.last_config_downloaded_at = datetime.now(timezone.utc)
     db.commit()
 
     # Get allowed IPs from policy compiler (includes VPN subnet + branch routes)
     from app.services.policy_compiler import compile_client_allowed_ips
     allowed_ips = compile_client_allowed_ips(db, peer.id)
-    if not allowed_ips:
-        # Fallback: all active networks
-        networks = db.query(Network).filter(Network.is_active == True).all()
-        allowed_ips = [n.cidr for n in networks] if networks else ["0.0.0.0/0"]
-
-    latest_revision = (
-        db.query(ConfigRevision)
-        .order_by(ConfigRevision.revision_number.desc())
-        .first()
-    )
-    revision = latest_revision.revision_number if latest_revision else 0
+    revision = peer.config_revision
 
     return FullConfigResponse(
         revision=revision,
@@ -397,12 +399,12 @@ def get_full_config(
         interface=WireGuardInterfaceConfig(
             tunnel_address=peer.assigned_ip,
             allowed_ips=allowed_ips,
-            dns=peer.dns,
+            dns=peer.dns or server_cfg.dns,
         ),
         peer=WireGuardPeerConfig(
             private_key=peer.private_key,
             address=peer.assigned_ip,
-            dns=peer.dns,
+            dns=peer.dns or server_cfg.dns,
             persistent_keepalive=peer.persistent_keepalive,
         ),
         metadata={
@@ -420,19 +422,11 @@ def get_config_version(
     db: Session = Depends(get_db),
 ):
     """Get current configuration revision number."""
-    latest_revision = (
-        db.query(ConfigRevision)
-        .order_by(ConfigRevision.revision_number.desc())
-        .first()
-    )
-    
-    if not latest_revision:
-        return ConfigVersionResponse(current_revision=0)
-    
-    return ConfigVersionResponse(
-        current_revision=latest_revision.revision_number,
-        last_updated_at=latest_revision.created_at,
-    )
+    peer = _get_or_create_peer(db, user)
+    from app.services.sync_service import refresh_revisions
+    refresh_revisions(db)
+    latest = db.query(ConfigRevision).filter(ConfigRevision.peer_id == peer.id).order_by(ConfigRevision.revision_number.desc()).first()
+    return ConfigVersionResponse(current_revision=peer.config_revision, last_updated_at=latest.created_at if latest else None)
 
 
 @router.get("/config/delta", response_model=DeltaConfigResponse)
@@ -442,14 +436,11 @@ def get_config_delta(
     db: Session = Depends(get_db),
 ):
     """Get configuration changes since client's last known revision."""
-    latest_revision = (
-        db.query(ConfigRevision)
-        .order_by(ConfigRevision.revision_number.desc())
-        .first()
-    )
-    
-    current_revision = latest_revision.revision_number if latest_revision else 0
-    
+    peer = _get_or_create_peer(db, user)
+    from app.services.sync_service import refresh_revisions
+    refresh_revisions(db)
+    current_revision = peer.config_revision
+
     # No changes
     if client_revision >= current_revision:
         return DeltaConfigResponse(
@@ -462,7 +453,7 @@ def get_config_delta(
     # Get changes since client revision
     changes = (
         db.query(ConfigRevision)
-        .filter(ConfigRevision.revision_number > client_revision)
+        .filter(ConfigRevision.peer_id == peer.id, ConfigRevision.revision_number > client_revision)
         .order_by(ConfigRevision.revision_number.asc())
         .all()
     )
@@ -471,7 +462,7 @@ def get_config_delta(
         ConfigChange(
             revision=c.revision_number,
             change_type=c.change_type,
-            data={},  # TODO: Parse JSON from c.changes
+            data=json.loads(c.changes or "{}"),
         )
         for c in changes
     ]
@@ -529,8 +520,17 @@ def report_client_status(
     if not peer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found")
     
-    # Update last_config_downloaded_at as proxy for last_seen
-    peer.last_config_downloaded_at = datetime.now(timezone.utc)
+    peer.last_seen_at = datetime.now(timezone.utc)
+    if body.applied_revision is not None:
+        if body.applied_revision < 0 or body.applied_revision > peer.config_revision:
+            raise HTTPException(409, "Revisión aplicada inválida")
+        if body.applied_revision and not db.query(ConfigRevision).filter(
+            ConfigRevision.peer_id == peer.id, ConfigRevision.revision_number == body.applied_revision).first():
+            raise HTTPException(409, "La revisión no pertenece a este peer")
+        if peer.applied_config_revision is not None and body.applied_revision < peer.applied_config_revision:
+            raise HTTPException(409, "La confirmación no puede retroceder")
+        peer.applied_config_revision = body.applied_revision
+        peer.last_config_applied_at = datetime.now(timezone.utc)
     db.commit()
     
     audit_log(
